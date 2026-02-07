@@ -1,0 +1,2096 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+家纺四件套记账系统 - GUI版本
+功能：图形化界面实时记账
+作者：AI Assistant
+日期：2026-02-06
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import json
+import os
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+import csv
+import urllib.request
+import urllib.error
+import threading
+
+# 版本信息
+VERSION = "0.1"
+GITHUB_REPO = "andyyuzy-76/textile-accounting"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+class AccountingApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title(f"🏠 家纺四件套记账系统 v{VERSION}")
+        self.root.geometry("900x700")
+        self.root.configure(bg='#f0f0f0')
+        self.root.state('zoomed')  # 窗口最大化
+        
+        # 数据文件路径
+        home_dir = os.path.expanduser("~")
+        self.data_dir = os.path.join(home_dir, ".accounting-tool")
+        self.data_file = os.path.join(self.data_dir, "records.json")
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        # 加载数据
+        self.records = self.load_records()
+        
+        # 显示模式：True=只显示今天，False=显示全部
+        self.showing_today_only = True
+        
+        # 创建界面
+        self.create_widgets()
+        
+        # 刷新显示（默认只显示今天）
+        self.refresh_display()
+        
+        # 绑定快捷键（F5刷新，Ctrl+Enter添加记录）
+        self.root.bind('<F5>', lambda e: self.refresh_display())
+        self.root.bind('<Control-Return>', lambda e: self.add_record())
+    
+    def load_records(self) -> List[Dict]:
+        """加载历史记录"""
+        if os.path.exists(self.data_file):
+            try:
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return []
+        return []
+    
+    def save_records(self):
+        """保存记录"""
+        with open(self.data_file, 'w', encoding='utf-8') as f:
+            json.dump(self.records, f, ensure_ascii=False, indent=2)
+    
+    def create_widgets(self):
+        """创建界面组件"""
+        # 标题
+        title_frame = tk.Frame(self.root, bg='#2c3e50', height=60)
+        title_frame.pack(fill=tk.X)
+        title_frame.pack_propagate(False)
+        
+        title_label = tk.Label(
+            title_frame, 
+            text="🏠 家纺四件套记账系统", 
+            font=('微软雅黑', 20, 'bold'),
+            bg='#2c3e50',
+            fg='white'
+        )
+        title_label.pack(pady=10)
+        
+        # 主内容区
+        main_frame = tk.Frame(self.root, bg='#f0f0f0')
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # 左侧录入区
+        left_frame = tk.LabelFrame(
+            main_frame, 
+            text="📝 录入新记录", 
+            font=('微软雅黑', 12, 'bold'),
+            bg='#f0f0f0',
+            fg='#2c3e50'
+        )
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        # 录入表单
+        form_frame = tk.Frame(left_frame, bg='#f0f0f0')
+        form_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        # 日期
+        tk.Label(form_frame, text="📅 日期:", font=('微软雅黑', 11), bg='#f0f0f0').grid(row=0, column=0, sticky='w', pady=5)
+        self.date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        date_entry = tk.Entry(form_frame, textvariable=self.date_var, font=('微软雅黑', 11), width=15)
+        date_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
+        tk.Button(form_frame, text="今天", command=self.set_today, font=('微软雅黑', 9)).grid(row=0, column=2, padx=5)
+        
+        # 记录类型（销售/退货）
+        tk.Label(form_frame, text="📋 类型:", font=('微软雅黑', 11), bg='#f0f0f0').grid(row=1, column=0, sticky='w', pady=5)
+        self.record_type_var = tk.StringVar(value="sale")
+        type_frame = tk.Frame(form_frame, bg='#f0f0f0')
+        type_frame.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+        tk.Radiobutton(type_frame, text="✅ 销售", variable=self.record_type_var, value="sale", 
+                      font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(type_frame, text="🔄 退货", variable=self.record_type_var, value="return",
+                      font=('微软雅黑', 10), bg='#f0f0f0', fg='#e74c3c').pack(side=tk.LEFT, padx=5)
+        
+        # 商品明细区域
+        items_frame = tk.LabelFrame(form_frame, text="📦 商品明细", font=('微软雅黑', 10, 'bold'), bg='#f0f0f0')
+        items_frame.grid(row=2, column=0, columnspan=3, sticky='ew', pady=10)
+        
+        # 商品表格头部
+        header_frame = tk.Frame(items_frame, bg='#ecf0f1')
+        header_frame.pack(fill=tk.X, padx=5, pady=2)
+        tk.Label(header_frame, text="数量", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=8).pack(side=tk.LEFT, padx=2)
+        tk.Label(header_frame, text="单价", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=8).pack(side=tk.LEFT, padx=2)
+        tk.Label(header_frame, text="小计", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=10).pack(side=tk.LEFT, padx=2)
+        tk.Label(header_frame, text="", bg='#ecf0f1', width=3).pack(side=tk.LEFT, padx=2)
+        
+        # 商品行容器（可滚动）
+        self.items_container = tk.Frame(items_frame, bg='#f0f0f0')
+        self.items_container.pack(fill=tk.X, padx=5, pady=2)
+        
+        # 存储商品行数据
+        self.item_rows = []  # 每行: {'qty_var': StringVar, 'price_var': StringVar, 'subtotal_label': Label, 'frame': Frame}
+        
+        # 添加第一行
+        self.add_item_row()
+        
+        # 添加商品行按钮
+        add_row_btn = tk.Button(items_frame, text="➕ 添加商品行", command=self.add_item_row,
+                                font=('微软雅黑', 9), bg='#3498db', fg='white')
+        add_row_btn.pack(pady=5)
+        
+        # 汇总区域
+        summary_frame = tk.Frame(form_frame, bg='#f0f0f0')
+        summary_frame.grid(row=3, column=0, columnspan=3, sticky='ew', pady=5)
+        
+        tk.Label(summary_frame, text="📊 汇总:", font=('微软雅黑', 11, 'bold'), bg='#f0f0f0').pack(side=tk.LEFT)
+        self.summary_qty_var = tk.StringVar(value="0套")
+        tk.Label(summary_frame, textvariable=self.summary_qty_var, font=('微软雅黑', 11), bg='#f0f0f0', fg='#2c3e50').pack(side=tk.LEFT, padx=10)
+        self.summary_total_var = tk.StringVar(value="¥0.00")
+        tk.Label(summary_frame, textvariable=self.summary_total_var, font=('微软雅黑', 11, 'bold'), bg='#f0f0f0', fg='#e74c3c').pack(side=tk.LEFT, padx=10)
+        
+        # 备注
+        note_frame = tk.Frame(form_frame, bg='#f0f0f0')
+        note_frame.grid(row=4, column=0, columnspan=3, sticky='ew', pady=5)
+        tk.Label(note_frame, text="📝 备注(客户名等):", font=('微软雅黑', 10), bg='#f0f0f0').pack(anchor='w')
+        self.note_text = tk.Text(note_frame, font=('微软雅黑', 10), width=30, height=2)
+        self.note_text.pack(fill=tk.X, pady=2)
+        self.note_text.bind('<Return>', self.on_note_return)
+        
+        # 添加按钮
+        btn_frame = tk.Frame(left_frame, bg='#f0f0f0')
+        btn_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        add_btn = tk.Button(
+            btn_frame,
+            text="✅ 添加记录 (Ctrl+Enter)",
+            command=self.add_record,
+            font=('微软雅黑', 12, 'bold'),
+            bg='#27ae60',
+            fg='white',
+            height=2
+        )
+        add_btn.pack(fill=tk.X, pady=5)
+
+        # 快捷提示
+        tip_label = tk.Label(
+            btn_frame,
+            text="💡 回车跳转下一项，Ctrl+Enter提交",
+            font=('微软雅黑', 9),
+            bg='#f0f0f0',
+            fg='#7f8c8d'
+        )
+        tip_label.pack(pady=2)
+        
+        clear_btn = tk.Button(
+            btn_frame, 
+            text="🔄 清空表单", 
+            command=self.clear_form,
+            font=('微软雅黑', 10),
+            bg='#95a5a6',
+            fg='white'
+        )
+        clear_btn.pack(fill=tk.X, pady=5)
+        
+        # 今日统计
+        stats_frame = tk.LabelFrame(
+            left_frame, 
+            text="📊 今日统计", 
+            font=('微软雅黑', 11, 'bold'),
+            bg='#f0f0f0',
+            fg='#2c3e50'
+        )
+        stats_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        self.stats_label = tk.Label(
+            stats_frame, 
+            text="加载中...", 
+            font=('微软雅黑', 10),
+            bg='#f0f0f0',
+            justify=tk.LEFT
+        )
+        self.stats_label.pack(padx=10, pady=10)
+        
+        # 右侧记录列表
+        right_frame = tk.LabelFrame(
+            main_frame, 
+            text="📋 记录列表", 
+            font=('微软雅黑', 12, 'bold'),
+            bg='#f0f0f0',
+            fg='#2c3e50'
+        )
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        # 筛选区
+        filter_frame = tk.Frame(right_frame, bg='#f0f0f0')
+        filter_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        # 显示状态标签
+        self.status_label = tk.Label(filter_frame, text="实时销售", font=('微软雅黑', 10, 'bold'), bg='#f0f0f0', fg='#27ae60')
+        self.status_label.pack(side=tk.LEFT, padx=5)
+
+        tk.Label(filter_frame, text="|", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+
+        # 日期选择器
+        tk.Label(filter_frame, text="日期:", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+
+        # 年份选择
+        self.filter_year_var = tk.StringVar(value=str(datetime.now().year))
+        year_values = [str(y) for y in range(2020, 2031)]
+        year_combo = ttk.Combobox(filter_frame, textvariable=self.filter_year_var, values=year_values,
+                                   width=5, font=('微软雅黑', 10), state='readonly')
+        year_combo.pack(side=tk.LEFT, padx=2)
+        tk.Label(filter_frame, text="年", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+
+        # 月份选择
+        self.filter_month_var = tk.StringVar(value=str(datetime.now().month).zfill(2))
+        month_values = [str(m).zfill(2) for m in range(1, 13)]
+        month_combo = ttk.Combobox(filter_frame, textvariable=self.filter_month_var, values=month_values,
+                                    width=3, font=('微软雅黑', 10), state='readonly')
+        month_combo.pack(side=tk.LEFT, padx=2)
+        tk.Label(filter_frame, text="月", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+
+        # 日期选择
+        self.filter_day_var = tk.StringVar(value=str(datetime.now().day).zfill(2))
+        day_values = [str(d).zfill(2) for d in range(1, 32)]
+        day_combo = ttk.Combobox(filter_frame, textvariable=self.filter_day_var, values=day_values,
+                                  width=3, font=('微软雅黑', 10), state='readonly')
+        day_combo.pack(side=tk.LEFT, padx=2)
+        tk.Label(filter_frame, text="日", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+
+        # 确认按钮 - 显示选中日期的记录
+        tk.Button(filter_frame, text="确认查看", command=self.confirm_date_filter,
+                  font=('微软雅黑', 9, 'bold'), bg='#3498db', fg='white').pack(side=tk.LEFT, padx=5)
+
+        tk.Button(filter_frame, text="今天", command=self.show_today_records, font=('微软雅黑', 9), bg='#27ae60', fg='white').pack(side=tk.LEFT, padx=2)
+        tk.Button(filter_frame, text="本月", command=self.show_month_records, font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(filter_frame, text="本年", command=self.show_year_records, font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(filter_frame, text="全部", command=self.show_all_records, font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=2)
+        
+        # 记录表格
+        tree_frame = tk.Frame(right_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # 滚动条
+        scrollbar_y = tk.Scrollbar(tree_frame)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        scrollbar_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # 表格（树形显示：购买记录为父节点，退货为子节点）
+        self.tree = ttk.Treeview(
+            tree_frame,
+            columns=('ID', '日期', '数量', '单价', '总金额', '备注'),
+            show='tree headings',  # 显示树形结构 + 列标题
+            yscrollcommand=scrollbar_y.set,
+            xscrollcommand=scrollbar_x.set
+        )
+        
+        # 设置树形列宽度
+        self.tree.column('#0', width=30, stretch=False)  # 树形展开列
+        
+        # 设置列
+        self.tree.heading('ID', text='ID')
+        self.tree.heading('日期', text='📅 日期')
+        self.tree.heading('数量', text='📦 数量')
+        self.tree.heading('单价', text='💰 单价')
+        self.tree.heading('总金额', text='💵 总金额')
+        self.tree.heading('备注', text='📝 备注')
+        
+        self.tree.column('ID', width=50, anchor='center')
+        self.tree.column('日期', width=100, anchor='center')
+        self.tree.column('数量', width=70, anchor='center')
+        self.tree.column('单价', width=80, anchor='center')
+        self.tree.column('总金额', width=90, anchor='center')
+        self.tree.column('备注', width=180)
+        
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar_y.config(command=self.tree.yview)
+        scrollbar_x.config(command=self.tree.xview)
+
+        # 合计金额显示
+        total_frame = tk.Frame(right_frame, bg='#f0f0f0')
+        total_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
+
+        tk.Label(total_frame, text="合计金额:", font=('微软雅黑', 11, 'bold'), bg='#f0f0f0', fg='#2c3e50').pack(side=tk.LEFT)
+        self.total_label = tk.Label(total_frame, text="¥0.00", font=('微软雅黑', 12, 'bold'), bg='#f0f0f0', fg='#e74c3c')
+        self.total_label.pack(side=tk.LEFT, padx=10)
+
+        # 右键菜单
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="📝 编辑备注", command=self.edit_note)
+        self.context_menu.add_command(label="✏️ 编辑数量单价", command=self.edit_quantity_price)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="🔄 部分退货", command=self.convert_to_return)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="🗑️ 删除记录", command=self.delete_selected)
+        self.tree.bind('<Button-3>', self.show_context_menu)
+        
+        # 底部按钮栏
+        bottom_frame = tk.Frame(self.root, bg='#ecf0f1', height=50)
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom_frame.pack_propagate(False)
+        
+        btn_container = tk.Frame(bottom_frame, bg='#ecf0f1')
+        btn_container.pack(pady=10)
+        
+        tk.Button(
+            btn_container, 
+            text="💾 导出CSV", 
+            command=self.export_csv,
+            font=('微软雅黑', 10),
+            bg='#3498db',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            btn_container, 
+            text="📥 导入CSV", 
+            command=self.import_csv,
+            font=('微软雅黑', 10),
+            bg='#9b59b6',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            btn_container,
+            text="📥 导入Excel",
+            command=self.import_excel,
+            font=('微软雅黑', 10),
+            bg='#16a085',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_container,
+            text="📊 月度统计",
+            command=self.show_monthly_stats,
+            font=('微软雅黑', 10),
+            bg='#e67e22',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_container,
+            text="⚙️ 系统设置",
+            command=self.show_settings,
+            font=('微软雅黑', 10),
+            bg='#34495e',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_container,
+            text="❌ 退出",
+            command=self.root.quit,
+            font=('微软雅黑', 10),
+            bg='#e74c3c',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+
+        # 设置初始焦点（第一个商品行的数量输入框）
+        self.root.after(100, lambda: self.item_rows[0]['qty_entry'].focus_set() if self.item_rows else None)
+
+    def add_item_row(self):
+        """添加一个商品行"""
+        row_frame = tk.Frame(self.items_container, bg='#f0f0f0')
+        row_frame.pack(fill=tk.X, pady=1)
+        
+        qty_var = tk.StringVar()
+        price_var = tk.StringVar()
+        
+        # 数量输入
+        qty_entry = tk.Entry(row_frame, textvariable=qty_var, font=('微软雅黑', 10), width=8)
+        qty_entry.pack(side=tk.LEFT, padx=2)
+        qty_var.trace_add('write', lambda *args: self.update_item_subtotal(row_data))
+        
+        # 单价输入
+        price_entry = tk.Entry(row_frame, textvariable=price_var, font=('微软雅黑', 10), width=8)
+        price_entry.pack(side=tk.LEFT, padx=2)
+        price_var.trace_add('write', lambda *args: self.update_item_subtotal(row_data))
+        
+        # 小计显示
+        subtotal_label = tk.Label(row_frame, text="¥0.00", font=('微软雅黑', 10), bg='#f0f0f0', width=10, anchor='w')
+        subtotal_label.pack(side=tk.LEFT, padx=2)
+        
+        # 删除按钮
+        def delete_row():
+            if len(self.item_rows) > 1:  # 至少保留一行
+                row_frame.destroy()
+                self.item_rows.remove(row_data)
+                self.update_summary()
+        
+        del_btn = tk.Button(row_frame, text="🗑", command=delete_row, font=('微软雅黑', 8), 
+                           bg='#e74c3c', fg='white', width=2)
+        del_btn.pack(side=tk.LEFT, padx=2)
+        
+        row_data = {
+            'qty_var': qty_var,
+            'price_var': price_var,
+            'subtotal_label': subtotal_label,
+            'frame': row_frame,
+            'qty_entry': qty_entry,
+            'price_entry': price_entry
+        }
+        
+        self.item_rows.append(row_data)
+        
+        # 绑定回车键跳转
+        qty_entry.bind('<Return>', lambda e: price_entry.focus())
+        price_entry.bind('<Return>', lambda e: self.on_price_enter(row_data))
+        
+        # 聚焦到数量输入框
+        qty_entry.focus_set()
+        
+        return row_data
+    
+    def on_price_enter(self, current_row):
+        """单价输入框回车：如果有值则添加新行，否则提交"""
+        qty = current_row['qty_var'].get().strip()
+        price = current_row['price_var'].get().strip()
+        
+        if qty and price:
+            # 当前行有数据，添加新行
+            new_row = self.add_item_row()
+        else:
+            # 当前行没数据，跳到备注或提交
+            self.note_text.focus()
+    
+    def update_item_subtotal(self, row_data):
+        """更新单行小计"""
+        try:
+            qty = int(row_data['qty_var'].get() or 0)
+            price = float(row_data['price_var'].get() or 0)
+            subtotal = qty * price
+            row_data['subtotal_label'].config(text=f"¥{subtotal:.2f}")
+        except:
+            row_data['subtotal_label'].config(text="¥0.00")
+        self.update_summary()
+    
+    def update_summary(self):
+        """更新汇总信息"""
+        total_qty = 0
+        total_amount = 0.0
+        
+        for row in self.item_rows:
+            try:
+                qty = int(row['qty_var'].get() or 0)
+                price = float(row['price_var'].get() or 0)
+                total_qty += qty
+                total_amount += qty * price
+            except:
+                pass
+        
+        self.summary_qty_var.set(f"{total_qty}套")
+        self.summary_total_var.set(f"¥{total_amount:.2f}")
+
+    def on_note_return(self, event):
+        """备注框回车事件"""
+        # Ctrl+Enter: 添加记录
+        if event.state & 0x4:  # Ctrl键 (Windows)
+            self.add_record()
+            return 'break'
+        # 普通回车: 插入换行
+        return None  # 允许默认行为（换行）
+    
+    def insert_newline(self):
+        """在备注框插入换行"""
+        self.note_text.insert(tk.INSERT, '\n')
+    
+    def set_today(self):
+        """设置日期为今天"""
+        self.date_var.set(datetime.now().strftime("%Y-%m-%d"))
+    
+    def calculate_total(self, event=None):
+        """计算总金额（兼容旧方法，现在通过update_summary实现）"""
+        self.update_summary()
+    
+    def add_record(self):
+        """添加记录（支持多商品行）"""
+        try:
+            date = self.date_var.get().strip()
+            note = self.note_text.get('1.0', tk.END).strip()
+            record_type = self.record_type_var.get()  # sale 或 return
+            
+            # 验证日期
+            if not date:
+                messagebox.showerror("错误", "请输入日期！")
+                return
+            
+            # 收集所有商品行数据
+            items = []
+            total_quantity = 0
+            total_amount = 0.0
+            
+            for row in self.item_rows:
+                qty_str = row['qty_var'].get().strip()
+                price_str = row['price_var'].get().strip()
+                
+                if qty_str and price_str:
+                    try:
+                        qty = int(qty_str)
+                        price = float(price_str)
+                        if qty > 0 and price > 0:
+                            items.append({'quantity': qty, 'unit_price': price})
+                            total_quantity += qty
+                            total_amount += qty * price
+                    except ValueError:
+                        pass
+            
+            # 验证是否有有效商品
+            if not items:
+                messagebox.showerror("错误", "请至少添加一个有效的商品行（数量和单价都要大于0）！")
+                return
+            
+            # 处理退货：数量为负数
+            if record_type == "return":
+                total_quantity = -total_quantity
+                total_amount = -total_amount
+                type_label = "退货"
+                # 退货记录自动添加标识
+                if note:
+                    note = f"[退货] {note}"
+                else:
+                    note = "[退货]"
+                # items中的数量也取负
+                for item in items:
+                    item['quantity'] = -item['quantity']
+            else:
+                type_label = "销售"
+            
+            # 计算平均单价（用于兼容旧数据格式显示）
+            avg_price = abs(total_amount) / abs(total_quantity) if total_quantity != 0 else 0
+            
+            # 创建记录（保持向后兼容）
+            record = {
+                "id": len(self.records) + 1,
+                "date": date,
+                "quantity": total_quantity,
+                "unit_price": avg_price,  # 平均单价，用于兼容
+                "total_amount": total_amount,
+                "note": note,
+                "type": record_type,
+                "items": items,  # 新增：商品明细
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            self.records.append(record)
+            self.save_records()
+            
+            # 刷新显示
+            self.refresh_display()
+            self.clear_form()
+            
+            # 显示成功提示
+            abs_quantity = abs(total_quantity)
+            items_count = len(items)
+            self.show_success_message(f"✅ {type_label}记录添加成功！\n日期: {date}\n商品: {items_count}种 共{abs_quantity}套\n金额: ¥{abs(total_amount):.2f}")
+            
+        except ValueError as e:
+            messagebox.showerror("错误", f"输入格式错误: {str(e)}")
+    
+    def show_success_message(self, message):
+        """显示成功提示"""
+        popup = tk.Toplevel(self.root)
+        popup.title("成功")
+        popup.geometry("300x150")
+        popup.transient(self.root)
+        
+        tk.Label(popup, text=message, font=('微软雅黑', 11), justify=tk.CENTER).pack(expand=True, pady=20)
+        tk.Button(popup, text="确定", command=popup.destroy, font=('微软雅黑', 10)).pack(pady=10)
+        
+        # 3秒后自动关闭
+        popup.after(3000, popup.destroy)
+    
+    def clear_form(self):
+        """清空表单"""
+        # 清空备注
+        self.note_text.delete('1.0', tk.END)
+        
+        # 清空所有商品行（保留第一行）
+        while len(self.item_rows) > 1:
+            row = self.item_rows.pop()
+            row['frame'].destroy()
+        
+        # 清空第一行的数据
+        if self.item_rows:
+            self.item_rows[0]['qty_var'].set("")
+            self.item_rows[0]['price_var'].set("")
+            self.item_rows[0]['subtotal_label'].config(text="¥0.00")
+            self.item_rows[0]['qty_entry'].focus()
+        
+        # 更新汇总
+        self.update_summary()
+    
+    def refresh_display(self):
+        """刷新显示"""
+        if self.showing_today_only:
+            self.update_tree_today()
+        else:
+            self.update_tree_all()
+        self.update_stats()
+    
+    def update_tree_all(self):
+        """显示所有记录（树形结构：销售为父节点，退货为子节点）"""
+        # 清空现有数据
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # 构建父子关系映射：original_record_id -> [退货记录列表]
+        returns_by_parent = {}
+        sale_records = []
+        orphan_returns = []  # 没有关联原记录的退货
+        
+        for record in self.records:
+            if record.get('type') == 'return' or record['quantity'] < 0:
+                parent_id = record.get('original_record_id')
+                if parent_id:
+                    if parent_id not in returns_by_parent:
+                        returns_by_parent[parent_id] = []
+                    returns_by_parent[parent_id].append(record)
+                else:
+                    orphan_returns.append(record)
+            else:
+                sale_records.append(record)
+        
+        # 按日期排序（降序）
+        sale_records = sorted(sale_records, key=lambda x: x['date'], reverse=True)
+        orphan_returns = sorted(orphan_returns, key=lambda x: x['date'], reverse=True)
+        
+        # 插入销售记录（父节点）及其退货（子节点）
+        for record in sale_records:
+            parent_iid = self._insert_record(record, parent='')
+            # 插入关联的退货记录作为子节点
+            child_returns = returns_by_parent.get(record['id'], [])
+            for ret_record in sorted(child_returns, key=lambda x: x.get('created_at', '')):
+                self._insert_record(ret_record, parent=parent_iid)
+        
+        # 插入孤立的退货记录（没有关联原记录的）
+        for record in orphan_returns:
+            self._insert_record(record, parent='')
+
+        # 设置退货记录的颜色
+        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('child_return', foreground='#e74c3c', background='#fef9f9')
+        self.update_total()
+
+    def update_tree_today(self):
+        """只显示今天记录（树形结构）"""
+        # 清空现有数据
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_records = [r for r in self.records if r['date'] == today]
+        
+        # 构建父子关系映射
+        returns_by_parent = {}
+        sale_records = []
+        orphan_returns = []
+        
+        for record in today_records:
+            if record.get('type') == 'return' or record['quantity'] < 0:
+                parent_id = record.get('original_record_id')
+                if parent_id:
+                    if parent_id not in returns_by_parent:
+                        returns_by_parent[parent_id] = []
+                    returns_by_parent[parent_id].append(record)
+                else:
+                    orphan_returns.append(record)
+            else:
+                sale_records.append(record)
+        
+        # 按创建时间排序（降序）
+        sale_records = sorted(sale_records, key=lambda x: x.get('created_at', ''), reverse=True)
+        orphan_returns = sorted(orphan_returns, key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        # 插入销售记录（父节点）及其退货（子节点）
+        for record in sale_records:
+            parent_iid = self._insert_record(record, parent='')
+            child_returns = returns_by_parent.get(record['id'], [])
+            for ret_record in sorted(child_returns, key=lambda x: x.get('created_at', '')):
+                self._insert_record(ret_record, parent=parent_iid)
+        
+        # 插入孤立的退货记录
+        for record in orphan_returns:
+            self._insert_record(record, parent='')
+
+        # 设置退货记录的颜色
+        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('child_return', foreground='#e74c3c', background='#fef9f9')
+        self.update_total()
+
+    def _display_records_tree(self, records_list):
+        """通用树形显示方法：将记录按父子关系显示"""
+        # 清空现有数据
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # 构建父子关系映射
+        returns_by_parent = {}
+        sale_records = []
+        orphan_returns = []
+        
+        for record in records_list:
+            if record.get('type') == 'return' or record['quantity'] < 0:
+                parent_id = record.get('original_record_id')
+                if parent_id:
+                    if parent_id not in returns_by_parent:
+                        returns_by_parent[parent_id] = []
+                    returns_by_parent[parent_id].append(record)
+                else:
+                    orphan_returns.append(record)
+            else:
+                sale_records.append(record)
+        
+        # 按日期排序（降序）
+        sale_records = sorted(sale_records, key=lambda x: x['date'], reverse=True)
+        orphan_returns = sorted(orphan_returns, key=lambda x: x['date'], reverse=True)
+        
+        # 插入销售记录（父节点）及其退货（子节点）
+        for record in sale_records:
+            parent_iid = self._insert_record(record, parent='')
+            child_returns = returns_by_parent.get(record['id'], [])
+            for ret_record in sorted(child_returns, key=lambda x: x.get('created_at', '')):
+                self._insert_record(ret_record, parent=parent_iid)
+        
+        # 插入孤立的退货记录
+        for record in orphan_returns:
+            self._insert_record(record, parent='')
+
+        # 设置退货记录的颜色
+        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('child_return', foreground='#e74c3c', background='#fef9f9')
+        self.update_total()
+
+    def _insert_record(self, record, parent=''):
+        """插入单条记录（兼容新旧数据格式，支持树形父子结构）"""
+        quantity = record['quantity']
+        total = record['total_amount']
+        
+        # 判断是否为退货
+        is_return = record.get('type') == 'return' or quantity < 0
+        is_child = parent != ''  # 是否为子节点（关联退货）
+        
+        # 获取备注，如果有多商品则显示商品数
+        note = record.get('note', '')
+        items = record.get('items', [])
+        if items and len(items) > 1:
+            # 多商品记录，显示商品种类数
+            items_info = f"[{len(items)}种]"
+            if note:
+                note = f"{items_info} {note}"
+            else:
+                note = items_info
+        
+        # 格式化显示
+        if is_return:
+            qty_display = f"-{abs(quantity)}"
+            total_display = f"-¥{abs(total):.2f}"
+            note_display = note[:18] + ('...' if len(note) > 18 else '')
+            if is_child:
+                tags = ('child_return',)
+            else:
+                tags = ('return',)
+        else:
+            qty_display = str(quantity)
+            total_display = f"¥{total:.2f}"
+            note_display = note[:20] + ('...' if len(note) > 20 else '')
+            tags = ()
+        
+        # 单价显示：多商品时显示"多价"，单商品显示实际单价
+        if items and len(items) > 1:
+            price_display = "多价"
+        else:
+            price_display = f"¥{record['unit_price']:.2f}"
+        
+        # 树形显示文本（子节点显示↳符号）
+        tree_text = "↳" if is_child else ""
+        
+        item_iid = self.tree.insert(parent, tk.END, text=tree_text, values=(
+            record['id'],
+            record['date'],
+            qty_display,
+            price_display,
+            total_display,
+            note_display
+        ), tags=tags, open=True)
+        
+        return item_iid
+
+    def update_total(self):
+        """更新合计金额（包括树形子节点）"""
+        if not hasattr(self, 'total_label'):
+            return
+
+        total_amount = 0.0
+
+        def sum_children(parent):
+            """递归计算所有节点金额"""
+            nonlocal total_amount
+            for item in self.tree.get_children(parent):
+                item_values = self.tree.item(item, 'values')
+                if item_values and len(item_values) >= 5:
+                    amount_str = item_values[4]
+                    amount_str = amount_str.replace('¥', '').replace(',', '').strip()
+                    try:
+                        amount = float(amount_str)
+                        total_amount += amount
+                    except:
+                        pass
+                # 递归处理子节点
+                sum_children(item)
+        
+        sum_children('')
+
+        # 格式化显示
+        if abs(total_amount) < 0.01:
+            self.total_label.config(text="¥0.00", fg='#2c3e50')
+        elif total_amount < 0:
+            self.total_label.config(text=f"-¥{abs(total_amount):.2f}", fg='#e74c3c')
+        else:
+            self.total_label.config(text=f"¥{total_amount:.2f}", fg='#27ae60')
+
+    def update_tree(self, records=None):
+        """更新表格（兼容旧方法）"""
+        # 清空现有数据
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # 显示记录
+        if records is None:
+            if self.showing_today_only:
+                today = datetime.now().strftime("%Y-%m-%d")
+                records = sorted(
+                    [r for r in self.records if r['date'] == today],
+                    key=lambda x: x.get('created_at', ''),
+                    reverse=True
+                )
+            else:
+                records = sorted(self.records, key=lambda x: x['date'], reverse=True)
+        
+        for record in records:
+            quantity = record['quantity']
+            total = record['total_amount']
+            
+            # 判断是否为退货
+            is_return = record.get('type') == 'return' or quantity < 0
+            
+            # 格式化显示
+            if is_return:
+                qty_display = f"-{abs(quantity)}"
+                total_display = f"-¥{abs(total):.2f}"
+                note_display = record.get('note', '')[:18] + ('...' if len(record.get('note', '')) > 18 else '')
+                tags = ('return',)
+            else:
+                qty_display = str(quantity)
+                total_display = f"¥{total:.2f}"
+                note_display = record.get('note', '')[:20] + ('...' if len(record.get('note', '')) > 20 else '')
+                tags = ()
+            
+            item = self.tree.insert('', tk.END, values=(
+                record['id'],
+                record['date'],
+                qty_display,
+                f"¥{record['unit_price']:.2f}",
+                total_display,
+                note_display
+            ), tags=tags)
+        
+        # 设置退货记录的颜色
+        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.update_total()
+
+    def update_stats(self):
+        """更新统计"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_records = [r for r in self.records if r['date'] == today]
+        
+        # 分离销售和退货
+        sale_records = [r for r in today_records if r.get('type') != 'return' and r['quantity'] > 0]
+        return_records = [r for r in today_records if r.get('type') == 'return' or r['quantity'] < 0]
+        
+        # 销售统计
+        sale_qty = sum(r['quantity'] for r in sale_records)
+        sale_amount = sum(r['total_amount'] for r in sale_records)
+        
+        # 退货统计
+        return_qty = sum(abs(r['quantity']) for r in return_records)
+        return_amount = sum(abs(r['total_amount']) for r in return_records)
+        
+        # 净统计
+        net_qty = sale_qty - return_qty
+        net_amount = sale_amount - return_amount
+        
+        avg_price = sale_amount / sale_qty if sale_qty > 0 else 0
+        
+        stats_text = f"""
+📅 今日 ({today})
+━━━━━━━━━━━━━━━━
+✅ 销售: {sale_qty}套 ¥{sale_amount:.2f}
+🔄 退货: {return_qty}套 ¥{return_amount:.2f}
+━━━━━━━━━━━━━━━━
+📦 净数量: {net_qty} 套
+💵 净金额: ¥{net_amount:.2f}
+💰 平均单价: ¥{avg_price:.2f}
+📝 记录数: {len(today_records)} 条
+        """
+        self.stats_label.config(text=stats_text)
+
+    def confirm_date_filter(self):
+        """确认查看选中日期的记录（树形结构）"""
+        year = self.filter_year_var.get()
+        month = self.filter_month_var.get().zfill(2)
+        day = self.filter_day_var.get().zfill(2)
+
+        # 组合日期
+        date_str = f"{year}-{month}-{day}"
+
+        # 筛选该日期的记录
+        filtered = [r for r in self.records if r['date'] == date_str]
+
+        # 更新状态
+        self.showing_today_only = False
+        self.status_label.config(text=f"📅 {date_str}", fg='#34495e')
+
+        if filtered:
+            self._display_records_tree(filtered)
+            # 更新统计为选中日期的统计
+            self.update_stats_for_date(date_str)
+        else:
+            # 清空表格
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            # 没有记录时显示空状态
+            self.stats_label.config(
+                text=f"\n📅 {date_str}\n━━━━━━━━━━━━━━━━\n📭 该日暂无记录\n\n请选择其他日期或添加新记录",
+                justify=tk.CENTER
+            )
+
+    def update_stats_for_date(self, date_str):
+        """更新指定日期的统计"""
+        date_records = [r for r in self.records if r['date'] == date_str]
+
+        if not date_records:
+            return
+
+        # 分离销售和退货
+        sale_records = [r for r in date_records if r.get('type') != 'return' and r['quantity'] > 0]
+        return_records = [r for r in date_records if r.get('type') == 'return' or r['quantity'] < 0]
+
+        # 销售统计
+        sale_qty = sum(r['quantity'] for r in sale_records)
+        sale_amount = sum(r['total_amount'] for r in sale_records)
+
+        # 退货统计
+        return_qty = sum(abs(r['quantity']) for r in return_records)
+        return_amount = sum(abs(r['total_amount']) for r in return_records)
+
+        # 净统计
+        net_qty = sale_qty - return_qty
+        net_amount = sale_amount - return_amount
+
+        avg_price = sale_amount / sale_qty if sale_qty > 0 else 0
+
+        stats_text = f"""
+📅 {date_str}
+━━━━━━━━━━━━━━━━
+✅ 销售: {sale_qty}套 ¥{sale_amount:.2f}
+🔄 退货: {return_qty}套 ¥{return_amount:.2f}
+━━━━━━━━━━━━━━━━
+📦 净数量: {net_qty} 套
+💵 净金额: ¥{net_amount:.2f}
+💰 平均单价: ¥{avg_price:.2f}
+📝 记录数: {len(date_records)} 条
+        """
+        self.stats_label.config(text=stats_text)
+
+    def show_all_records(self):
+        """显示所有记录"""
+        self.showing_today_only = False
+        self.update_tree_all()
+        # 更新状态标签
+        self.status_label.config(text="📋 全部记录", fg='#3498db')
+
+    def show_today_records(self):
+        """显示今日记录"""
+        self.showing_today_only = True
+        self.update_tree_today()
+        # 更新筛选框显示今天
+        today = datetime.now()
+        self.filter_year_var.set(str(today.year))
+        self.filter_month_var.set(str(today.month).zfill(2))
+        self.filter_day_var.set(str(today.day).zfill(2))
+        # 更新状态标签
+        self.status_label.config(text="实时销售", fg='#27ae60')
+
+    def show_month_records(self):
+        """显示本月记录（树形结构）"""
+        self.showing_today_only = False
+        this_month = datetime.now().strftime("%Y-%m")
+        month_records = [r for r in self.records if r['date'].startswith(this_month)]
+        self._display_records_tree(month_records)
+        # 更新筛选框和状态
+        self.filter_year_var.set(str(datetime.now().year))
+        self.filter_month_var.set(str(datetime.now().month).zfill(2))
+        self.filter_day_var.set("01")
+        self.status_label.config(text="📆 本月记录", fg='#9b59b6')
+
+    def show_year_records(self):
+        """显示本年记录（树形结构）"""
+        self.showing_today_only = False
+        this_year = datetime.now().strftime("%Y")
+        year_records = [r for r in self.records if r['date'].startswith(this_year)]
+        self._display_records_tree(year_records)
+        # 更新筛选框和状态
+        self.filter_year_var.set(str(datetime.now().year))
+        self.filter_month_var.set("01")
+        self.filter_day_var.set("01")
+        self.status_label.config(text="📊 本年记录", fg='#e67e22')
+
+    def show_context_menu(self, event):
+        """显示右键菜单"""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
+    
+    def edit_note(self):
+        """编辑选中记录的备注"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择要编辑的记录")
+            return
+        
+        item = selected[0]
+        values = self.tree.item(item, 'values')
+        record_id = int(values[0])
+        
+        # 找到对应记录
+        record = None
+        for r in self.records:
+            if r['id'] == record_id:
+                record = r
+                break
+        
+        if not record:
+            messagebox.showerror("错误", "未找到记录")
+            return
+        
+        # 创建编辑窗口
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title(f"编辑备注 - 记录#{record_id}")
+        edit_window.geometry("400x300")
+        edit_window.transient(self.root)
+        edit_window.grab_set()  # 模态窗口
+        
+        # 显示记录信息
+        info_frame = tk.Frame(edit_window)
+        info_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        tk.Label(info_frame, text=f"📅 日期: {record['date']}", font=('微软雅黑', 10)).pack(anchor='w')
+        tk.Label(info_frame, text=f"📦 数量: {abs(record['quantity'])}套", font=('微软雅黑', 10)).pack(anchor='w')
+        tk.Label(info_frame, text=f"💵 金额: ¥{abs(record['total_amount']):.2f}", font=('微软雅黑', 10)).pack(anchor='w')
+        
+        # 备注编辑区
+        tk.Label(edit_window, text="📝 备注:", font=('微软雅黑', 11)).pack(anchor='w', padx=15, pady=(10, 5))
+        
+        note_text = tk.Text(edit_window, font=('微软雅黑', 10), width=40, height=4)
+        note_text.pack(padx=15, fill=tk.X)
+        note_text.insert('1.0', record.get('note', ''))
+        note_text.focus_set()
+        
+        # 按钮区
+        btn_frame = tk.Frame(edit_window)
+        btn_frame.pack(pady=20)
+        
+        def save_note():
+            new_note = note_text.get('1.0', tk.END).strip()
+            record['note'] = new_note
+            self.save_records()
+            self.refresh_display()
+            edit_window.destroy()
+            messagebox.showinfo("成功", "备注已更新")
+        
+        tk.Button(btn_frame, text="✅ 确认", command=save_note,
+                  font=('微软雅黑', 11), bg='#27ae60', fg='white', width=10, height=1).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="❌ 取消", command=edit_window.destroy,
+                  font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=10, height=1).pack(side=tk.LEFT, padx=10)
+        
+        # 绑定Ctrl+Enter保存
+        note_text.bind('<Control-Return>', lambda e: save_note())
+    
+    def edit_quantity_price(self):
+        """编辑选中记录的数量和单价"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择要编辑的记录")
+            return
+        
+        item = selected[0]
+        values = self.tree.item(item, 'values')
+        record_id = int(values[0])
+        
+        # 找到对应记录
+        record = None
+        for r in self.records:
+            if r['id'] == record_id:
+                record = r
+                break
+        
+        if not record:
+            messagebox.showerror("错误", "未找到记录")
+            return
+        
+        # 创建编辑窗口
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title(f"编辑数量单价 - 记录#{record_id}")
+        edit_window.geometry("400x280")
+        edit_window.transient(self.root)
+        edit_window.grab_set()
+        
+        # 显示记录信息
+        info_frame = tk.Frame(edit_window)
+        info_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        tk.Label(info_frame, text=f"📅 日期: {record['date']}", font=('微软雅黑', 10)).pack(anchor='w')
+        tk.Label(info_frame, text=f"📝 备注: {record.get('note', '')[:30]}", font=('微软雅黑', 10)).pack(anchor='w')
+        
+        # 编辑区
+        form_frame = tk.Frame(edit_window)
+        form_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        tk.Label(form_frame, text="📦 数量:", font=('微软雅黑', 11)).grid(row=0, column=0, sticky='w', pady=5)
+        qty_var = tk.StringVar(value=str(abs(record['quantity'])))
+        qty_entry = tk.Entry(form_frame, textvariable=qty_var, font=('微软雅黑', 11), width=15)
+        qty_entry.grid(row=0, column=1, pady=5, padx=10)
+        
+        tk.Label(form_frame, text="💰 单价:", font=('微软雅黑', 11)).grid(row=1, column=0, sticky='w', pady=5)
+        price_var = tk.StringVar(value=str(record['unit_price']))
+        price_entry = tk.Entry(form_frame, textvariable=price_var, font=('微软雅黑', 11), width=15)
+        price_entry.grid(row=1, column=1, pady=5, padx=10)
+        
+        # 实时计算总金额
+        total_label = tk.Label(form_frame, text=f"💵 总金额: ¥{abs(record['total_amount']):.2f}", font=('微软雅黑', 11, 'bold'))
+        total_label.grid(row=2, column=0, columnspan=2, sticky='w', pady=10)
+        
+        def update_total(*args):
+            try:
+                qty = int(qty_var.get() or 0)
+                price = float(price_var.get() or 0)
+                total_label.config(text=f"💵 总金额: ¥{qty * price:.2f}")
+            except:
+                pass
+        
+        qty_var.trace_add('write', update_total)
+        price_var.trace_add('write', update_total)
+        
+        qty_entry.focus_set()
+        
+        # 按钮区
+        btn_frame = tk.Frame(edit_window)
+        btn_frame.pack(pady=20)
+        
+        def save_changes():
+            try:
+                new_qty = int(qty_var.get())
+                new_price = float(price_var.get())
+                
+                if new_qty <= 0 or new_price <= 0:
+                    messagebox.showerror("错误", "数量和单价必须大于0")
+                    return
+                
+                # 保持原有的正负号（退货记录数量为负）
+                if record['quantity'] < 0:
+                    new_qty = -new_qty
+                
+                record['quantity'] = new_qty
+                record['unit_price'] = new_price
+                record['total_amount'] = new_qty * new_price
+                
+                self.save_records()
+                self.refresh_display()
+                edit_window.destroy()
+                messagebox.showinfo("成功", "记录已更新")
+            except ValueError:
+                messagebox.showerror("错误", "请输入有效的数字")
+        
+        tk.Button(btn_frame, text="✅ 确认", command=save_changes,
+                  font=('微软雅黑', 11), bg='#27ae60', fg='white', width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="❌ 取消", command=edit_window.destroy,
+                  font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=10).pack(side=tk.LEFT, padx=10)
+        
+        qty_entry.bind('<Return>', lambda e: price_entry.focus())
+        price_entry.bind('<Return>', lambda e: save_changes())
+        edit_window.bind('<Control-Return>', lambda e: save_changes())
+    
+    def convert_to_return(self):
+        """部分退货 - 支持多个不同单价的商品"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择要退货的记录")
+            return
+        
+        item = selected[0]
+        values = self.tree.item(item, 'values')
+        record_id = int(values[0])
+        
+        # 找到对应记录
+        record = None
+        for r in self.records:
+            if r['id'] == record_id:
+                record = r
+                break
+        
+        if not record:
+            messagebox.showerror("错误", "未找到记录")
+            return
+        
+        # 检查是否已经是退货记录
+        if record.get('type') == 'return' or record['quantity'] < 0:
+            messagebox.showinfo("提示", "该记录已经是退货记录，无法再退货")
+            return
+        
+        # 创建退货窗口
+        return_window = tk.Toplevel(self.root)
+        return_window.title(f"部分退货 - 记录#{record_id}")
+        return_window.geometry("450x420")
+        return_window.transient(self.root)
+        return_window.grab_set()
+        
+        # 显示原记录信息
+        info_frame = tk.LabelFrame(return_window, text="原销售记录", font=('微软雅黑', 10, 'bold'))
+        info_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        tk.Label(info_frame, text=f"📅 日期: {record['date']}  |  📦 数量: {record['quantity']}套  |  💵 金额: ¥{record['total_amount']:.2f}", 
+                font=('微软雅黑', 10)).pack(anchor='w', padx=10, pady=5)
+        
+        # 退货商品明细区
+        return_frame = tk.LabelFrame(return_window, text="退货商品明细（可添加多行）", font=('微软雅黑', 10, 'bold'))
+        return_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        
+        # 表头
+        header_frame = tk.Frame(return_frame, bg='#ecf0f1')
+        header_frame.pack(fill=tk.X, padx=5, pady=2)
+        tk.Label(header_frame, text="数量", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=8).pack(side=tk.LEFT, padx=2)
+        tk.Label(header_frame, text="单价", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=8).pack(side=tk.LEFT, padx=2)
+        tk.Label(header_frame, text="小计", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=10).pack(side=tk.LEFT, padx=2)
+        tk.Label(header_frame, text="", bg='#ecf0f1', width=3).pack(side=tk.LEFT, padx=2)
+        
+        # 商品行容器
+        items_container = tk.Frame(return_frame)
+        items_container.pack(fill=tk.X, padx=5, pady=2)
+        
+        return_items = []  # 存储退货商品行
+        
+        # 汇总显示
+        summary_frame = tk.Frame(return_frame)
+        summary_frame.pack(fill=tk.X, padx=5, pady=5)
+        summary_label = tk.Label(summary_frame, text="退货汇总: 0套  ¥0.00", font=('微软雅黑', 11, 'bold'), fg='#e74c3c')
+        summary_label.pack(anchor='w')
+        
+        def update_summary():
+            total_qty = 0
+            total_amount = 0.0
+            for item_row in return_items:
+                try:
+                    qty = int(item_row['qty_var'].get() or 0)
+                    price = float(item_row['price_var'].get() or 0)
+                    subtotal = qty * price
+                    item_row['subtotal_label'].config(text=f"¥{subtotal:.2f}")
+                    total_qty += qty
+                    total_amount += subtotal
+                except:
+                    item_row['subtotal_label'].config(text="¥0.00")
+            summary_label.config(text=f"退货汇总: {total_qty}套  ¥{total_amount:.2f}")
+        
+        def add_return_row():
+            row_frame = tk.Frame(items_container)
+            row_frame.pack(fill=tk.X, pady=1)
+            
+            qty_var = tk.StringVar()
+            price_var = tk.StringVar()
+            
+            qty_entry = tk.Entry(row_frame, textvariable=qty_var, font=('微软雅黑', 10), width=8)
+            qty_entry.pack(side=tk.LEFT, padx=2)
+            
+            price_entry = tk.Entry(row_frame, textvariable=price_var, font=('微软雅黑', 10), width=8)
+            price_entry.pack(side=tk.LEFT, padx=2)
+            
+            subtotal_label = tk.Label(row_frame, text="¥0.00", font=('微软雅黑', 10), width=10, anchor='w')
+            subtotal_label.pack(side=tk.LEFT, padx=2)
+            
+            row_data = {
+                'qty_var': qty_var,
+                'price_var': price_var,
+                'subtotal_label': subtotal_label,
+                'frame': row_frame,
+                'qty_entry': qty_entry,
+                'price_entry': price_entry
+            }
+            
+            def delete_row():
+                if len(return_items) > 1:
+                    row_frame.destroy()
+                    return_items.remove(row_data)
+                    update_summary()
+            
+            del_btn = tk.Button(row_frame, text="🗑", command=delete_row, font=('微软雅黑', 8), 
+                               bg='#e74c3c', fg='white', width=2)
+            del_btn.pack(side=tk.LEFT, padx=2)
+            
+            qty_var.trace_add('write', lambda *args: update_summary())
+            price_var.trace_add('write', lambda *args: update_summary())
+            
+            return_items.append(row_data)
+            
+            qty_entry.bind('<Return>', lambda e: price_entry.focus())
+            price_entry.bind('<Return>', lambda e: add_return_row() if qty_var.get() and price_var.get() else None)
+            
+            qty_entry.focus_set()
+            return row_data
+        
+        # 添加第一行
+        add_return_row()
+        
+        # 添加行按钮
+        tk.Button(return_frame, text="➕ 添加退货商品", command=add_return_row,
+                  font=('微软雅黑', 9), bg='#3498db', fg='white').pack(pady=5)
+        
+        # 按钮区
+        btn_frame = tk.Frame(return_window)
+        btn_frame.pack(pady=15)
+        
+        def do_return():
+            # 收集所有退货商品
+            items = []
+            total_qty = 0
+            total_amount = 0.0
+            
+            for item_row in return_items:
+                try:
+                    qty = int(item_row['qty_var'].get() or 0)
+                    price = float(item_row['price_var'].get() or 0)
+                    if qty > 0 and price > 0:
+                        items.append({'quantity': -qty, 'unit_price': price})
+                        total_qty += qty
+                        total_amount += qty * price
+                except:
+                    pass
+            
+            if not items:
+                messagebox.showerror("错误", "请至少添加一个有效的退货商品")
+                return
+            
+            if total_qty > record['quantity']:
+                messagebox.showerror("错误", f"退货总数量({total_qty}套)不能超过原购买数量({record['quantity']}套)")
+                return
+            
+            # 计算平均单价
+            avg_price = total_amount / total_qty if total_qty > 0 else 0
+            
+            # 创建退货记录
+            return_record = {
+                "id": len(self.records) + 1,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "quantity": -total_qty,
+                "unit_price": avg_price,
+                "total_amount": -total_amount,
+                "note": f"[退货] 原记录#{record_id} {record.get('note', '')}",
+                "type": "return",
+                "items": items,
+                "original_record_id": record_id,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            self.records.append(return_record)
+            self.save_records()
+            self.refresh_display()
+            return_window.destroy()
+            
+            messagebox.showinfo("成功", f"退货成功！\n退货: {total_qty}套 ({len(items)}种)\n退款: ¥{total_amount:.2f}")
+        
+        tk.Button(btn_frame, text="✅ 确认退货", command=do_return,
+                  font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="❌ 取消", command=return_window.destroy,
+                  font=('微软雅黑', 11), bg='#95a5a6', fg='white', width=10).pack(side=tk.LEFT, padx=10)
+        
+        return_window.bind('<Control-Return>', lambda e: do_return())
+    
+    def delete_selected(self):
+        """删除选中记录"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择要删除的记录")
+            return
+        
+        if messagebox.askyesno("确认删除", "确定要删除这条记录吗？"):
+            item = selected[0]
+            values = self.tree.item(item, 'values')
+            record_id = int(values[0])
+            
+            # 删除记录
+            self.records = [r for r in self.records if r['id'] != record_id]
+            
+            # 重新编号
+            for i, record in enumerate(self.records, 1):
+                record['id'] = i
+            
+            self.save_records()
+            self.refresh_display()
+            messagebox.showinfo("成功", "记录已删除")
+    
+    def export_csv(self):
+        """导出CSV"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"记账导出_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['ID', '日期', '数量', '单价', '总金额', '备注', '创建时间'])
+                    
+                    for record in self.records:
+                        writer.writerow([
+                            record['id'],
+                            record['date'],
+                            record['quantity'],
+                            record['unit_price'],
+                            record['total_amount'],
+                            record.get('note', ''),
+                            record.get('created_at', '')
+                        ])
+                
+                messagebox.showinfo("成功", f"数据已导出到:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("错误", f"导出失败: {str(e)}")
+    
+    def import_csv(self):
+        """导入CSV"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            try:
+                imported = 0
+                failed = 0
+                
+                with open(file_path, 'r', encoding='utf-8-sig') as f:
+                    reader = csv.DictReader(f)
+                    
+                    for row in reader:
+                        try:
+                            # 自动识别列名
+                            date = row.get('日期') or row.get('date') or row.get('Date')
+                            quantity = row.get('数量') or row.get('quantity') or row.get('Quantity')
+                            price = row.get('单价') or row.get('unit_price') or row.get('price')
+                            note = row.get('备注') or row.get('note') or row.get('Note')
+                            
+                            if date and quantity and price:
+                                record = {
+                                    "id": len(self.records) + 1,
+                                    "date": date,
+                                    "quantity": int(float(quantity)),
+                                    "unit_price": float(price),
+                                    "total_amount": int(float(quantity)) * float(price),
+                                    "note": note or "",
+                                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                }
+                                self.records.append(record)
+                                imported += 1
+                            else:
+                                failed += 1
+                        except:
+                            failed += 1
+                
+                self.save_records()
+                self.refresh_display()
+                
+                msg = f"导入完成！\n成功: {imported} 条"
+                if failed > 0:
+                    msg += f"\n失败: {failed} 条"
+                messagebox.showinfo("导入结果", msg)
+                
+            except Exception as e:
+                messagebox.showerror("错误", f"导入失败: {str(e)}")
+
+    def import_excel(self):
+        """导入Excel文件"""
+        try:
+            import openpyxl
+        except ImportError:
+            messagebox.showerror(
+                "缺少依赖",
+                "导入Excel需要安装 openpyxl 库\n\n"
+                "请运行以下命令安装:\n"
+                "pip install openpyxl"
+            )
+            return
+
+        file_path = filedialog.askopenfilename(
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("Excel 2007+", "*.xlsx"),
+                ("Excel 97-2003", "*.xls"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not file_path:
+            return
+
+        try:
+            # 读取Excel文件
+            wb = openpyxl.load_workbook(file_path, data_only=True)
+            sheet = wb.active
+
+            # 获取表头
+            headers = []
+            for cell in sheet[1]:
+                headers.append(str(cell.value) if cell.value else "")
+
+            if not headers:
+                messagebox.showerror("错误", "Excel文件没有表头行")
+                return
+
+            # 创建预览窗口
+            preview_window = tk.Toplevel(self.root)
+            preview_window.title("Excel导入预览")
+            preview_window.geometry("800x600")
+            preview_window.transient(self.root)
+
+            # 说明文字
+            tk.Label(
+                preview_window,
+                text="📊 请选择数据对应的列",
+                font=('微软雅黑', 14, 'bold')
+            ).pack(pady=10)
+
+            # 列选择区域
+            selection_frame = tk.Frame(preview_window)
+            selection_frame.pack(pady=10)
+
+            tk.Label(selection_frame, text="日期列:", font=('微软雅黑', 11)).grid(row=0, column=0, padx=5, pady=5)
+            date_col = ttk.Combobox(selection_frame, values=headers, width=20, state='readonly')
+            date_col.grid(row=0, column=1, padx=5, pady=5)
+
+            tk.Label(selection_frame, text="数量列:", font=('微软雅黑', 11)).grid(row=1, column=0, padx=5, pady=5)
+            qty_col = ttk.Combobox(selection_frame, values=headers, width=20, state='readonly')
+            qty_col.grid(row=1, column=1, padx=5, pady=5)
+
+            tk.Label(selection_frame, text="单价列:", font=('微软雅黑', 11)).grid(row=2, column=0, padx=5, pady=5)
+            price_col = ttk.Combobox(selection_frame, values=headers, width=20, state='readonly')
+            price_col.grid(row=2, column=1, padx=5, pady=5)
+
+            tk.Label(selection_frame, text="备注列(可选):", font=('微软雅黑', 11)).grid(row=3, column=0, padx=5, pady=5)
+            note_col = ttk.Combobox(selection_frame, values=["(无)"] + headers, width=20, state='readonly')
+            note_col.set("(无)")
+            note_col.grid(row=3, column=1, padx=5, pady=5)
+
+            # 自动识别常用列名
+            for i, h in enumerate(headers):
+                h_lower = h.lower()
+                if any(kw in h_lower for kw in ['日期', 'date', '时间']):
+                    date_col.set(h)
+                elif any(kw in h_lower for kw in ['数量', 'quantity', '套数', '件数', '套']):
+                    qty_col.set(h)
+                elif any(kw in h_lower for kw in ['单价', 'price', 'unit', '价格']):
+                    price_col.set(h)
+                elif any(kw in h_lower for kw in ['备注', 'note', '说明', '客户']):
+                    note_col.set(h)
+
+            # 预览表格
+            preview_frame = tk.LabelFrame(preview_window, text="数据预览（前10行）", font=('微软雅黑', 11))
+            preview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+            # 创建预览表格
+            tree_frame = tk.Frame(preview_frame)
+            tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+            scrollbar_y = tk.Scrollbar(tree_frame)
+            scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+            preview_tree = ttk.Treeview(
+                tree_frame,
+                columns=headers,
+                show='headings',
+                yscrollcommand=scrollbar_y.set,
+                height=10
+            )
+
+            for h in headers:
+                preview_tree.heading(h, text=h)
+                preview_tree.column(h, width=100)
+
+            preview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar_y.config(command=preview_tree.yview)
+
+            # 加载预览数据
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                if row_idx > 11:  # 只显示前10行
+                    break
+                values = [str(v) if v is not None else "" for v in row]
+                preview_tree.insert('', tk.END, values=values)
+
+            # 导入按钮
+            def do_import():
+                d_col = date_col.get()
+                q_col = qty_col.get()
+                p_col = price_col.get()
+                n_col = note_col.get()
+
+                if not d_col or not q_col or not p_col:
+                    messagebox.showwarning("提示", "请选择日期、数量和单价列")
+                    return
+
+                # 获取列索引
+                d_idx = headers.index(d_col)
+                q_idx = headers.index(q_col)
+                p_idx = headers.index(p_col)
+                n_idx = headers.index(n_col) if n_col != "(无)" else None
+
+                imported = 0
+                failed = 0
+                failed_rows = []
+
+                for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                    try:
+                        date_val = row[d_idx]
+                        qty_val = row[q_idx]
+                        price_val = row[p_idx]
+                        note_val = row[n_idx] if n_idx is not None else ""
+
+                        # 处理日期
+                        if isinstance(date_val, datetime):
+                            date_str = date_val.strftime("%Y-%m-%d")
+                        elif isinstance(date_val, str):
+                            # 尝试解析日期字符串
+                            for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%Y年%m月%d日"]:
+                                try:
+                                    date_str = datetime.strptime(date_val.strip(), fmt).strftime("%Y-%m-%d")
+                                    break
+                                except:
+                                    continue
+                            else:
+                                failed += 1
+                                failed_rows.append(f"第{row_idx}行: 日期格式无法识别")
+                                continue
+                        else:
+                            # 尝试Excel序列号
+                            try:
+                                excel_date = int(float(date_val))
+                                parsed = datetime(1899, 12, 30) + __import__('datetime').timedelta(days=excel_date)
+                                date_str = parsed.strftime("%Y-%m-%d")
+                            except:
+                                failed += 1
+                                failed_rows.append(f"第{row_idx}行: 日期格式无效")
+                                continue
+
+                        # 处理数量和单价
+                        quantity = float(qty_val) if qty_val is not None else 0
+                        price = float(price_val) if price_val is not None else 0
+
+                        if quantity <= 0 or price <= 0:
+                            failed += 1
+                            failed_rows.append(f"第{row_idx}行: 数量或单价无效")
+                            continue
+
+                        # 处理备注
+                        note = str(note_val) if note_val is not None else ""
+
+                        # 创建记录
+                        record = {
+                            "id": len(self.records) + 1,
+                            "date": date_str,
+                            "quantity": int(quantity),
+                            "unit_price": float(price),
+                            "total_amount": int(quantity) * float(price),
+                            "note": note,
+                            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+
+                        self.records.append(record)
+                        imported += 1
+
+                    except Exception as e:
+                        failed += 1
+                        failed_rows.append(f"第{row_idx}行: {str(e)}")
+
+                self.save_records()
+                self.refresh_display()
+
+                preview_window.destroy()
+
+                # 显示结果
+                msg = f"✅ 导入完成！\n\n成功: {imported} 条"
+                if failed > 0:
+                    msg += f"\n失败: {failed} 条"
+
+                if failed_rows:
+                    msg += f"\n\n前5个错误:\n" + "\n".join(failed_rows[:5])
+                    if len(failed_rows) > 5:
+                        msg += f"\n...还有 {len(failed_rows) - 5} 个错误"
+
+                messagebox.showinfo("导入结果", msg)
+
+            btn_frame = tk.Frame(preview_window)
+            btn_frame.pack(pady=15)
+
+            tk.Button(
+                btn_frame,
+                text="✅ 确认导入",
+                command=do_import,
+                font=('微软雅黑', 12, 'bold'),
+                bg='#27ae60',
+                fg='white',
+                width=15
+            ).pack(side=tk.LEFT, padx=10)
+
+            tk.Button(
+                btn_frame,
+                text="❌ 取消",
+                command=preview_window.destroy,
+                font=('微软雅黑', 12),
+                bg='#e74c3c',
+                fg='white',
+                width=15
+            ).pack(side=tk.LEFT, padx=10)
+
+        except Exception as e:
+            messagebox.showerror("错误", f"读取Excel失败: {str(e)}")
+
+    def show_monthly_stats(self):
+        """显示月度统计"""
+        # 创建弹窗
+        popup = tk.Toplevel(self.root)
+        popup.title("月度统计")
+        popup.geometry("550x500")
+        popup.transient(self.root)
+
+        # 选择月份区域
+        select_frame = tk.Frame(popup)
+        select_frame.pack(pady=15)
+
+        tk.Label(select_frame, text="选择月份:", font=('微软雅黑', 12, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        # 年份下拉框
+        year_var = tk.StringVar(value=str(datetime.now().year))
+        year_values = [str(y) for y in range(2020, 2031)]
+        year_combo = ttk.Combobox(select_frame, textvariable=year_var, values=year_values,
+                                   width=6, font=('微软雅黑', 11), state='readonly')
+        year_combo.pack(side=tk.LEFT, padx=5)
+        tk.Label(select_frame, text="年", font=('微软雅黑', 11)).pack(side=tk.LEFT)
+
+        # 月份下拉框
+        month_var = tk.StringVar(value=str(datetime.now().month).zfill(2))
+        month_values = [str(m).zfill(2) for m in range(1, 13)]
+        month_combo = ttk.Combobox(select_frame, textvariable=month_var, values=month_values,
+                                    width=4, font=('微软雅黑', 11), state='readonly')
+        month_combo.pack(side=tk.LEFT, padx=5)
+        tk.Label(select_frame, text="月", font=('微软雅黑', 11)).pack(side=tk.LEFT)
+
+        # 确认按钮
+        def on_confirm():
+            calculate_stats()
+
+        tk.Button(select_frame, text="确认查看", command=on_confirm,
+                  font=('微软雅黑', 11, 'bold'), bg='#3498db', fg='white').pack(side=tk.LEFT, padx=15)
+
+        # 分割线
+        tk.Frame(popup, height=2, bg='#bdc3c7').pack(fill=tk.X, padx=20)
+
+        # 结果显示区域
+        result_text = tk.Text(popup, font=('微软雅黑', 11), height=18, width=55)
+        result_text.pack(padx=20, pady=15, fill=tk.BOTH, expand=True)
+
+        # 初始提示
+        result_text.insert('1.0', '\n\n请选择年月后点击"确认查看"\n统计该月份的销售额和退货情况')
+
+        def calculate_stats():
+            year = year_var.get()
+            month = month_var.get().zfill(2)
+            year_month = f"{year}-{month}"
+            month_records = [r for r in self.records if r['date'].startswith(year_month)]
+            
+            # 分离销售和退货
+            sale_records = [r for r in month_records if r.get('type') != 'return' and r['quantity'] > 0]
+            return_records = [r for r in month_records if r.get('type') == 'return' or r['quantity'] < 0]
+            
+            # 销售统计
+            sale_qty = sum(r['quantity'] for r in sale_records)
+            sale_amount = sum(r['total_amount'] for r in sale_records)
+            
+            # 退货统计
+            return_qty = sum(abs(r['quantity']) for r in return_records)
+            return_amount = sum(abs(r['total_amount']) for r in return_records)
+            
+            # 净统计
+            net_qty = sale_qty - return_qty
+            net_amount = sale_amount - return_amount
+            
+            avg_price = sale_amount / sale_qty if sale_qty > 0 else 0
+            
+            # 按日期分组
+            daily_stats = {}
+            for r in month_records:
+                date = r['date']
+                if date not in daily_stats:
+                    daily_stats[date] = {'qty': 0, 'amount': 0, 'return_qty': 0, 'return_amount': 0}
+                
+                if r.get('type') == 'return' or r['quantity'] < 0:
+                    daily_stats[date]['return_qty'] += abs(r['quantity'])
+                    daily_stats[date]['return_amount'] += abs(r['total_amount'])
+                else:
+                    daily_stats[date]['qty'] += r['quantity']
+                    daily_stats[date]['amount'] += r['total_amount']
+            
+            result = f"""
+📊 {year_month} 月度统计
+━━━━━━━━━━━━━━━━━━━━━━━━
+✅ 销售: {sale_qty}套 ¥{sale_amount:.2f}
+🔄 退货: {return_qty}套 ¥{return_amount:.2f}
+━━━━━━━━━━━━━━━━━━━━━━━━
+📦 净数量: {net_qty} 套
+💵 净金额: ¥{net_amount:.2f}
+💰 平均单价: ¥{avg_price:.2f}
+📝 记录数: {len(month_records)} 条
+📅 有记录天数: {len(daily_stats)} 天
+
+📈 每日明细:
+━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+            for date in sorted(daily_stats.keys()):
+                stats = daily_stats[date]
+                day_result = f"{date}: "
+                if stats['qty'] > 0:
+                    day_result += f"售{stats['qty']}套¥{stats['amount']:.0f}"
+                if stats['return_qty'] > 0:
+                    if stats['qty'] > 0:
+                        day_result += " | "
+                    day_result += f"退{stats['return_qty']}套¥{stats['return_amount']:.0f}"
+                result += day_result + "\n"
+            
+            result_text.delete('1.0', tk.END)
+            result_text.insert('1.0', result)
+        
+        # 提示用户操作
+        tk.Label(popup, text="（点击 确认查看 按钮刷新统计）", font=('微软雅黑', 9), fg='#7f8c8d').pack(pady=5)
+
+    def show_settings(self):
+        """显示系统设置窗口"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("⚙️ 系统设置")
+        settings_window.geometry("450x400")
+        settings_window.transient(self.root)
+        settings_window.grab_set()
+        
+        # 标题
+        tk.Label(settings_window, text="⚙️ 系统设置", font=('微软雅黑', 16, 'bold')).pack(pady=15)
+        
+        # 版本信息区
+        version_frame = tk.LabelFrame(settings_window, text="版本信息", font=('微软雅黑', 11, 'bold'))
+        version_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(version_frame, text=f"当前版本: v{VERSION}", font=('微软雅黑', 12)).pack(anchor='w', padx=15, pady=5)
+        tk.Label(version_frame, text=f"GitHub仓库: {GITHUB_REPO}", font=('微软雅黑', 10), fg='#7f8c8d').pack(anchor='w', padx=15, pady=2)
+        
+        # 升级状态显示
+        self.upgrade_status_var = tk.StringVar(value="点击下方按钮检查更新")
+        status_label = tk.Label(version_frame, textvariable=self.upgrade_status_var, font=('微软雅黑', 10), fg='#2c3e50')
+        status_label.pack(anchor='w', padx=15, pady=5)
+        
+        # 升级按钮
+        btn_frame = tk.Frame(version_frame)
+        btn_frame.pack(pady=10)
+        
+        check_btn = tk.Button(
+            btn_frame,
+            text="🔍 检查更新",
+            command=lambda: self.check_for_updates(settings_window),
+            font=('微软雅黑', 11),
+            bg='#3498db',
+            fg='white',
+            width=12
+        )
+        check_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 数据管理区
+        data_frame = tk.LabelFrame(settings_window, text="数据管理", font=('微软雅黑', 11, 'bold'))
+        data_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(data_frame, text=f"数据文件: {self.data_file}", font=('微软雅黑', 9), fg='#7f8c8d', wraplength=380).pack(anchor='w', padx=15, pady=5)
+        tk.Label(data_frame, text=f"记录总数: {len(self.records)} 条", font=('微软雅黑', 10)).pack(anchor='w', padx=15, pady=2)
+        
+        # 打开数据目录按钮
+        tk.Button(
+            data_frame,
+            text="📁 打开数据目录",
+            command=lambda: os.startfile(self.data_dir) if os.name == 'nt' else None,
+            font=('微软雅黑', 10),
+            bg='#95a5a6',
+            fg='white'
+        ).pack(pady=10)
+        
+        # 关于区
+        about_frame = tk.LabelFrame(settings_window, text="关于", font=('微软雅黑', 11, 'bold'))
+        about_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        about_text = """家纺四件套记账系统
+专为家纺销售设计的简单记账工具
+支持多商品录入、退货管理、数据导入导出
+
+© 2026 All Rights Reserved"""
+        tk.Label(about_frame, text=about_text, font=('微软雅黑', 9), fg='#7f8c8d', justify=tk.LEFT).pack(padx=15, pady=10)
+        
+        # 关闭按钮
+        tk.Button(
+            settings_window,
+            text="关闭",
+            command=settings_window.destroy,
+            font=('微软雅黑', 11),
+            bg='#e74c3c',
+            fg='white',
+            width=10
+        ).pack(pady=15)
+    
+    def check_for_updates(self, parent_window=None):
+        """检查GitHub Release更新"""
+        self.upgrade_status_var.set("⏳ 正在检查更新...")
+        
+        def check_thread():
+            try:
+                # 构建API URL
+                api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+                
+                req = urllib.request.Request(api_url)
+                req.add_header('User-Agent', 'AccountingApp')
+                
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                
+                latest_version = data.get('tag_name', '').lstrip('v')
+                release_url = data.get('html_url', '')
+                release_notes = data.get('body', '无更新说明')[:200]
+                
+                # 比较版本
+                if self.compare_versions(latest_version, VERSION) > 0:
+                    self.root.after(0, lambda: self.show_update_available(latest_version, release_url, release_notes, parent_window))
+                else:
+                    self.root.after(0, lambda: self.upgrade_status_var.set(f"✅ 已是最新版本 v{VERSION}"))
+                    
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    self.root.after(0, lambda: self.upgrade_status_var.set("⚠️ 未找到发布版本，请先在GitHub创建Release"))
+                else:
+                    self.root.after(0, lambda: self.upgrade_status_var.set(f"❌ 检查失败: HTTP {e.code}"))
+            except Exception as e:
+                self.root.after(0, lambda: self.upgrade_status_var.set(f"❌ 检查失败: {str(e)[:30]}"))
+        
+        # 在后台线程中检查
+        thread = threading.Thread(target=check_thread, daemon=True)
+        thread.start()
+    
+    def compare_versions(self, v1, v2):
+        """比较版本号，v1 > v2 返回 1，v1 < v2 返回 -1，相等返回 0"""
+        def parse_version(v):
+            return [int(x) for x in v.split('.') if x.isdigit()]
+        
+        parts1 = parse_version(v1)
+        parts2 = parse_version(v2)
+        
+        # 补齐长度
+        max_len = max(len(parts1), len(parts2))
+        parts1.extend([0] * (max_len - len(parts1)))
+        parts2.extend([0] * (max_len - len(parts2)))
+        
+        for p1, p2 in zip(parts1, parts2):
+            if p1 > p2:
+                return 1
+            elif p1 < p2:
+                return -1
+        return 0
+    
+    def show_update_available(self, new_version, release_url, release_notes, parent_window=None):
+        """显示有新版本可用"""
+        self.upgrade_status_var.set(f"🎉 发现新版本 v{new_version}!")
+        
+        # 创建更新对话框
+        update_window = tk.Toplevel(parent_window or self.root)
+        update_window.title("🎉 发现新版本")
+        update_window.geometry("400x300")
+        update_window.transient(parent_window or self.root)
+        update_window.grab_set()
+        
+        tk.Label(update_window, text="🎉 发现新版本!", font=('微软雅黑', 14, 'bold'), fg='#27ae60').pack(pady=15)
+        
+        tk.Label(update_window, text=f"当前版本: v{VERSION}", font=('微软雅黑', 11)).pack()
+        tk.Label(update_window, text=f"最新版本: v{new_version}", font=('微软雅黑', 11, 'bold'), fg='#3498db').pack()
+        
+        # 更新说明
+        tk.Label(update_window, text="更新说明:", font=('微软雅黑', 10, 'bold')).pack(anchor='w', padx=20, pady=(15, 5))
+        
+        notes_text = tk.Text(update_window, font=('微软雅黑', 9), height=5, width=45, wrap=tk.WORD)
+        notes_text.pack(padx=20)
+        notes_text.insert('1.0', release_notes if release_notes else "暂无更新说明")
+        notes_text.config(state='disabled')
+        
+        # 按钮
+        btn_frame = tk.Frame(update_window)
+        btn_frame.pack(pady=15)
+        
+        def open_release():
+            import webbrowser
+            webbrowser.open(release_url)
+        
+        tk.Button(
+            btn_frame,
+            text="🌐 前往下载",
+            command=open_release,
+            font=('微软雅黑', 11),
+            bg='#27ae60',
+            fg='white',
+            width=12
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(
+            btn_frame,
+            text="稍后再说",
+            command=update_window.destroy,
+            font=('微软雅黑', 11),
+            bg='#95a5a6',
+            fg='white',
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+
+
+def main():
+    """主程序"""
+    root = tk.Tk()
+    
+    # 设置样式
+    style = ttk.Style()
+    style.theme_use('clam')
+    
+    # 设置中文字体
+    root.option_add('*Font', '微软雅黑 10')
+    
+    app = AccountingApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
