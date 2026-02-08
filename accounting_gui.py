@@ -26,7 +26,7 @@ import time
 from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "0.3"
+VERSION = "0.4"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -89,7 +89,8 @@ class AccountingApp:
             'footer_text': '谢谢惠顾，欢迎下次光临！',
             'printer_name': '',  # 空字符串表示使用默认打印机
             'auto_print': False,  # 是否自动打印
-            'paper_width': 58  # 纸张宽度：58mm或80mm
+            'paper_width': 58,  # 纸张宽度：58mm或80mm
+            'compact_mode': True  # 紧凑模式：一张纸打印（推荐58mm）
         }
 
         if os.path.exists(settings_file):
@@ -2222,8 +2223,11 @@ class AccountingApp:
     def print_receipt(self, record):
         """打印小票"""
         try:
+            # 获取紧凑模式设置（默认True）
+            compact_mode = self.printer_settings.get('compact_mode', True)
+            
             # 生成小票文本
-            receipt_text = self.receipt_printer.format_receipt(record)
+            receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode)
 
             # 获取用户选择的打印机
             printer_name = self.printer_settings.get('printer_name', '')
@@ -2250,7 +2254,9 @@ class AccountingApp:
 
         if file_path:
             try:
-                receipt_text = self.receipt_printer.format_receipt(record)
+                # 获取紧凑模式设置（默认True）
+                compact_mode = self.printer_settings.get('compact_mode', True)
+                receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode)
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(receipt_text)
                 messagebox.showinfo("保存成功", f"小票已保存到:\n{file_path}")
@@ -2278,7 +2284,9 @@ class AccountingApp:
         scrollbar = tk.Scrollbar(text_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        receipt_text = self.receipt_printer.format_receipt(record)
+        # 获取紧凑模式设置（默认True）
+        compact_mode = self.printer_settings.get('compact_mode', True)
+        receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode)
 
         text_widget = tk.Text(
             text_frame,
@@ -2397,6 +2405,11 @@ class AccountingApp:
         tk.Checkbutton(printer_frame, text="销售/退货后自动打印小票", variable=auto_print_var,
                        font=('微软雅黑', 10)).grid(row=2, column=0, columnspan=2, sticky='w', padx=10, pady=5)
 
+        # 紧凑模式选项
+        compact_mode_var = tk.BooleanVar(value=self.printer_settings.get('compact_mode', True))
+        tk.Checkbutton(printer_frame, text="紧凑模式（一张纸打印，推荐58mm）", variable=compact_mode_var,
+                       font=('微软雅黑', 10)).grid(row=3, column=0, columnspan=2, sticky='w', padx=10, pady=5)
+
         # ========== 店铺信息区域 ==========
         shop_frame = tk.LabelFrame(
             scrollable_frame,
@@ -2470,7 +2483,8 @@ class AccountingApp:
             temp_printer.footer_text = footer_var.get()
 
             preview_text.delete('1.0', tk.END)
-            preview_text.insert('1.0', temp_printer.format_receipt(test_record))
+            # 使用紧凑模式预览
+            preview_text.insert('1.0', temp_printer.format_receipt(test_record, compact=compact_mode_var.get()))
 
         # 初始预览
         update_preview()
@@ -2501,7 +2515,8 @@ class AccountingApp:
                 'footer_text': footer_var.get(),
                 'printer_name': printer_name,
                 'paper_width': paper_width_var.get(),
-                'auto_print': auto_print_var.get()
+                'auto_print': auto_print_var.get(),
+                'compact_mode': compact_mode_var.get()
             }
 
             # 更新当前打印机设置
