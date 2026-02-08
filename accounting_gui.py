@@ -18,12 +18,15 @@ import urllib.request
 import urllib.error
 import threading
 import webbrowser
+import sys
+import subprocess
+import time
 
 # 导入打印模块
 from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "0.2"
+VERSION = "0.3"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -2092,9 +2095,12 @@ class AccountingApp:
                 release_url = data.get('html_url', '')
                 release_notes = data.get('body', '无更新说明')[:200]
                 
+                # 获取资源列表（用于自动更新）
+                assets = data.get('assets', [])
+                
                 # 比较版本
                 if self.compare_versions(latest_version, VERSION) > 0:
-                    self.root.after(0, lambda: self.show_update_available(latest_version, release_url, release_notes, parent_window))
+                    self.root.after(0, lambda: self.show_update_available(latest_version, release_url, release_notes, parent_window, assets))
                 else:
                     self.root.after(0, lambda: self.upgrade_status_var.set(f"✅ 已是最新版本 v{VERSION}"))
                     
@@ -2130,48 +2136,77 @@ class AccountingApp:
                 return -1
         return 0
     
-    def show_update_available(self, new_version, release_url, release_notes, parent_window=None):
-        """显示有新版本可用"""
+    def show_update_available(self, new_version, release_url, release_notes, parent_window=None, assets=None):
+        """显示有新版本可用，并提供自动更新选项"""
         self.upgrade_status_var.set(f"🎉 发现新版本 v{new_version}!")
-        
+
+        # 检查是否在运行打包后的EXE
+        is_exe = getattr(sys, 'frozen', False)
+
         # 创建更新对话框
         update_window = tk.Toplevel(parent_window or self.root)
         update_window.title("🎉 发现新版本")
-        update_window.geometry("400x300")
+        update_window.geometry("450x350")
         update_window.transient(parent_window or self.root)
         update_window.grab_set()
-        
+
         tk.Label(update_window, text="🎉 发现新版本!", font=('微软雅黑', 14, 'bold'), fg='#27ae60').pack(pady=15)
-        
+
         tk.Label(update_window, text=f"当前版本: v{VERSION}", font=('微软雅黑', 11)).pack()
         tk.Label(update_window, text=f"最新版本: v{new_version}", font=('微软雅黑', 11, 'bold'), fg='#3498db').pack()
-        
+
         # 更新说明
         tk.Label(update_window, text="更新说明:", font=('微软雅黑', 10, 'bold')).pack(anchor='w', padx=20, pady=(15, 5))
-        
-        notes_text = tk.Text(update_window, font=('微软雅黑', 9), height=5, width=45, wrap=tk.WORD)
+
+        notes_text = tk.Text(update_window, font=('微软雅黑', 9), height=5, width=48, wrap=tk.WORD)
         notes_text.pack(padx=20)
         notes_text.insert('1.0', release_notes if release_notes else "暂无更新说明")
         notes_text.config(state='disabled')
-        
+
         # 按钮
         btn_frame = tk.Frame(update_window)
         btn_frame.pack(pady=15)
-        
+
         def open_release():
             import webbrowser
             webbrowser.open(release_url)
-        
-        tk.Button(
-            btn_frame,
-            text="🌐 前往下载",
-            command=open_release,
-            font=('微软雅黑', 11),
-            bg='#27ae60',
-            fg='white',
-            width=12
-        ).pack(side=tk.LEFT, padx=5)
-        
+
+        # 如果是EXE运行，并且找到了EXE资源，显示自动更新按钮
+        exe_asset = None
+        if assets and is_exe:
+            for asset in assets:
+                name = asset.get('name', '').lower()
+                if name.endswith('.exe') and 'v' + new_version in name:
+                    exe_asset = asset
+                    break
+
+        if exe_asset and is_exe:
+            # 自动更新按钮
+            def start_auto_update():
+                update_window.destroy()
+                self.auto_update_exe(exe_asset.get('browser_download_url'), new_version)
+
+            tk.Button(
+                btn_frame,
+                text="⬇️ 自动更新",
+                command=start_auto_update,
+                font=('微软雅黑', 11),
+                bg='#27ae60',
+                fg='white',
+                width=12
+            ).pack(side=tk.LEFT, padx=5)
+        else:
+            # 手动下载按钮
+            tk.Button(
+                btn_frame,
+                text="🌐 前往下载",
+                command=open_release,
+                font=('微软雅黑', 11),
+                bg='#27ae60',
+                fg='white',
+                width=12
+            ).pack(side=tk.LEFT, padx=5)
+
         tk.Button(
             btn_frame,
             text="稍后再说",
@@ -2530,6 +2565,114 @@ class AccountingApp:
             self.show_receipt_preview(record)
         else:
             messagebox.showerror("错误", "未找到记录")
+
+    def auto_update_exe(self, download_url, new_version):
+        """自动下载并更新EXE文件"""
+        # 创建下载进度窗口
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("⬇️ 正在下载更新")
+        progress_window.geometry("400x200")
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+
+        tk.Label(progress_window, text=f"正在下载 v{new_version}...", font=('微软雅黑', 12)).pack(pady=20)
+
+        progress_var = tk.DoubleVar(value=0)
+        progress_bar = ttk.Progressbar(progress_window, variable=progress_var, maximum=100, length=350)
+        progress_bar.pack(pady=10, padx=20)
+
+        status_label = tk.Label(progress_window, text="准备下载...", font=('微软雅黑', 10))
+        status_label.pack(pady=10)
+
+        def download_thread():
+            try:
+                # 获取当前EXE路径
+                current_exe = sys.executable
+
+                # 创建临时下载路径
+                temp_dir = os.path.join(self.data_dir, 'update')
+                os.makedirs(temp_dir, exist_ok=True)
+                new_exe_path = os.path.join(temp_dir, f'家纺记账系统v{new_version}.exe')
+
+                # 下载文件
+                status_label.config(text="正在下载...")
+
+                req = urllib.request.Request(download_url)
+                req.add_header('User-Agent', 'AccountingApp')
+
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    total_size = int(response.headers.get('Content-Length', 0))
+                    downloaded = 0
+                    chunk_size = 8192
+
+                    with open(new_exe_path, 'wb') as f:
+                        while True:
+                            chunk = response.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                progress = (downloaded / total_size) * 100
+                                self.root.after(0, lambda p=progress: progress_var.set(p))
+
+                # 下载完成
+                self.root.after(0, progress_window.destroy)
+                self.root.after(0, lambda: self.install_update(new_exe_path, current_exe))
+
+            except Exception as e:
+                self.root.after(0, progress_window.destroy)
+                self.root.after(0, lambda: messagebox.showerror("下载失败", f"更新下载失败: {str(e)}\n\n请手动前往GitHub下载最新版本。"))
+                self.root.after(0, lambda: self.upgrade_status_var.set("❌ 更新下载失败"))
+
+        # 启动下载线程
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
+
+    def install_update(self, new_exe_path, current_exe):
+        """安装更新：创建批处理脚本替换旧版本"""
+        # 确认安装
+        if not messagebox.askyesno("安装更新", f"新版本已下载完成！\n\n点击「是」关闭程序并安装更新\n程序将自动重启"):
+            self.upgrade_status_var.set("⏸️ 更新已取消")
+            return
+
+        try:
+            # 创建批处理脚本
+            batch_path = os.path.join(self.data_dir, 'update.bat')
+            old_exe_backup = current_exe + '.old'
+
+            batch_content = f'''@echo off
+chcp 65001 >nul
+echo 正在安装更新...
+timeout /t 2 /nobreak >nul
+
+REM 删除旧备份（如果有）
+if exist "{old_exe_backup}" del /f "{old_exe_backup}"
+
+REM 备份当前EXE
+ren "{current_exe}" "{os.path.basename(old_exe_backup)}"
+
+REM 移动新版本到原位置
+move /y "{new_exe_path}" "{current_exe}"
+
+REM 启动新版本
+echo 正在启动新版本...
+start "" "{current_exe}"
+
+REM 删除自己
+del /f "%~f0"
+'''
+
+            with open(batch_path, 'w', encoding='utf-8') as f:
+                f.write(batch_content)
+
+            # 执行批处理并退出
+            subprocess.Popen(batch_path, shell=True)
+            self.root.quit()
+
+        except Exception as e:
+            messagebox.showerror("安装失败", f"更新安装失败: {str(e)}\n\n请手动前往GitHub下载最新版本。")
+            self.upgrade_status_var.set("❌ 更新安装失败")
 
 
 def main():
