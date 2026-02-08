@@ -49,60 +49,62 @@ class ReceiptPrinter:
             return self._format_standard_receipt(record)
     
     def _format_compact_receipt(self, record: Dict) -> str:
-        """紧凑格式小票 - 适合58mm热敏纸一张打印"""
+        """紧凑格式小票 - 适合58mm热敏纸一张打印，左对齐充分利用纸张宽度"""
         lines = []
-        width = self.receipt_width
+        # 58mm纸张实际可用宽度约32个字符（中文占2字符）
+        width = 32
         
-        # 店铺名称
-        lines.append(self._center_text(self.shop_name, width))
+        # 店铺名称（左对齐，不居中）
+        lines.append(self.shop_name[:16])  # 限制长度
         
-        # 小票类型 + 单号（合并到一行）
+        # 小票类型 + 单号（一行）
         is_return = record.get('type') == 'return' or record.get('quantity', 0) < 0
         receipt_type = "退" if is_return else "销"
         record_id = record.get('id', 0)
-        lines.append(f"【{receipt_type}】单号:#{record_id}")
+        lines.append(f"【{receipt_type}】#{record_id}")
         
-        # 日期时间
+        # 日期时间（只显示一次）
         date = record.get('date', datetime.now().strftime("%Y-%m-%d"))
-        created_at = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
-        lines.append(f"{date} {created_at}")
-        lines.append("-" * width)
+        lines.append(f"{date}")
         
-        # 商品明细 - 更紧凑的格式
+        # 简化的分隔线
+        lines.append("-" * 16)
+        
+        # 商品明细 - 超紧凑格式
         items = record.get('items', [])
         if not items:
             # 兼容旧数据格式
             qty = abs(record.get('quantity', 0))
             price = record.get('unit_price', 0)
             subtotal = qty * price
-            lines.append(f"四件套 x{qty} ¥{subtotal:.2f}")
+            lines.append(f"x{qty}套 ¥{subtotal:.0f}")
         else:
             for i, item in enumerate(items, 1):
                 qty = abs(item.get('quantity', 0))
                 price = item.get('unit_price', 0)
                 subtotal = qty * price
-                # 合并为一行显示
-                lines.append(f"{i}.四件套x{qty}@{price:.0f}=¥{subtotal:.2f}")
+                # 更紧凑：序号.数量x单价=金额
+                lines.append(f"{i}.x{qty}@{price:.0f}=¥{subtotal:.0f}")
         
         # 合计行
         total_amount = abs(record.get('total_amount', 0))
         total_qty = abs(record.get('quantity', 0))
-        lines.append("-" * width)
-        lines.append(f"合计:{total_qty}套 ¥{total_amount:.2f}")
+        lines.append("-" * 16)
+        lines.append(f"共{total_qty}套 ¥{total_amount:.0f}")
         
-        # 备注（如果有，紧凑显示）
+        # 备注（超短）
         note = record.get('note', '')
         if note:
-            # 截断备注避免过长
-            note_text = note[:20] + "..." if len(note) > 20 else note
-            lines.append(f"备注:{note_text}")
+            note_text = note[:10] + ".." if len(note) > 10 else note
+            lines.append(f"注:{note_text}")
         
-        # 底部信息（可选，紧凑模式下简化为电话）
+        # 电话（如果有）
         if self.shop_phone:
-            lines.append(f"Tel:{self.shop_phone}")
+            lines.append(f"{self.shop_phone}")
         
-        # 底部文字
-        lines.append(self._center_text(self.footer_text[:16], width))  # 限制底部文字长度
+        # 底部文字（左对齐）
+        footer = self.footer_text[:12] if len(self.footer_text) > 12 else self.footer_text
+        lines.append(footer)
         
         return "\n".join(lines)
     
