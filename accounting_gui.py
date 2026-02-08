@@ -26,7 +26,7 @@ import time
 from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "0.6"
+VERSION = "0.7"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -2177,7 +2177,8 @@ class AccountingApp:
         if assets and is_exe:
             for asset in assets:
                 name = asset.get('name', '').lower()
-                if name.endswith('.exe') and 'v' + new_version in name:
+                # 检查是否是EXE文件（支持带版本号或不带版本号的文件名）
+                if name.endswith('.exe'):
                     exe_asset = asset
                     break
 
