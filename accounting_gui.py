@@ -17,9 +17,13 @@ import csv
 import urllib.request
 import urllib.error
 import threading
+import webbrowser
+
+# 导入打印模块
+from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "0.1"
+VERSION = "0.2"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -39,10 +43,14 @@ class AccountingApp:
         
         # 加载数据
         self.records = self.load_records()
-        
+
         # 显示模式：True=只显示今天，False=显示全部
         self.showing_today_only = True
-        
+
+        # 初始化打印机
+        self.receipt_printer = ReceiptPrinter()
+        self.load_printer_settings()
+
         # 创建界面
         self.create_widgets()
         
@@ -67,6 +75,48 @@ class AccountingApp:
         """保存记录"""
         with open(self.data_file, 'w', encoding='utf-8') as f:
             json.dump(self.records, f, ensure_ascii=False, indent=2)
+
+    def load_printer_settings(self):
+        """加载打印机设置"""
+        settings_file = os.path.join(self.data_dir, "printer_settings.json")
+        self.printer_settings = {
+            'shop_name': '家纺四件套',
+            'shop_address': '',
+            'shop_phone': '',
+            'footer_text': '谢谢惠顾，欢迎下次光临！',
+            'printer_name': '',  # 空字符串表示使用默认打印机
+            'auto_print': False,  # 是否自动打印
+            'paper_width': 58  # 纸张宽度：58mm或80mm
+        }
+
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    loaded_settings = json.load(f)
+                    self.printer_settings.update(loaded_settings)
+
+                    # 应用到打印机
+                    self.receipt_printer.set_shop_info(
+                        name=self.printer_settings['shop_name'],
+                        address=self.printer_settings['shop_address'],
+                        phone=self.printer_settings['shop_phone']
+                    )
+                    self.receipt_printer.footer_text = self.printer_settings['footer_text']
+                    self.receipt_printer.receipt_width = 32 if self.printer_settings['paper_width'] == 58 else 48
+            except:
+                pass
+
+    def save_printer_settings(self, settings):
+        """保存打印机设置"""
+        settings_file = os.path.join(self.data_dir, "printer_settings.json")
+        try:
+            # 更新内存中的设置
+            self.printer_settings.update(settings)
+
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self.printer_settings, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            messagebox.showerror("错误", f"保存设置失败: {str(e)}")
     
     def create_widgets(self):
         """创建界面组件"""
@@ -327,6 +377,8 @@ class AccountingApp:
 
         # 右键菜单
         self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="🖨️ 打印小票", command=self.print_selected_record)
+        self.context_menu.add_separator()
         self.context_menu.add_command(label="📝 编辑备注", command=self.edit_note)
         self.context_menu.add_command(label="✏️ 编辑数量单价", command=self.edit_quantity_price)
         self.context_menu.add_separator()
@@ -376,6 +428,15 @@ class AccountingApp:
             command=self.show_monthly_stats,
             font=('微软雅黑', 10),
             bg='#e67e22',
+            fg='white'
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_container,
+            text="🖨️ 打印设置",
+            command=self.show_printer_settings,
+            font=('微软雅黑', 10),
+            bg='#1abc9c',
             fg='white'
         ).pack(side=tk.LEFT, padx=5)
 
@@ -589,27 +650,70 @@ class AccountingApp:
             # 刷新显示
             self.refresh_display()
             self.clear_form()
-            
-            # 显示成功提示
+
+            # 显示成功提示（带打印选项）
             abs_quantity = abs(total_quantity)
             items_count = len(items)
-            self.show_success_message(f"✅ {type_label}记录添加成功！\n日期: {date}\n商品: {items_count}种 共{abs_quantity}套\n金额: ¥{abs(total_amount):.2f}")
+            success_msg = f"✅ {type_label}记录添加成功！\n日期: {date}\n商品: {items_count}种 共{abs_quantity}套\n金额: ¥{abs(total_amount):.2f}"
+            self.show_success_message(success_msg, record)
             
         except ValueError as e:
             messagebox.showerror("错误", f"输入格式错误: {str(e)}")
     
-    def show_success_message(self, message):
-        """显示成功提示"""
+    def show_success_message(self, message, record=None):
+        """显示成功提示，带有打印选项"""
         popup = tk.Toplevel(self.root)
         popup.title("成功")
-        popup.geometry("300x150")
+        popup.geometry("320x200")
         popup.transient(self.root)
-        
-        tk.Label(popup, text=message, font=('微软雅黑', 11), justify=tk.CENTER).pack(expand=True, pady=20)
-        tk.Button(popup, text="确定", command=popup.destroy, font=('微软雅黑', 10)).pack(pady=10)
-        
-        # 3秒后自动关闭
-        popup.after(3000, popup.destroy)
+
+        tk.Label(popup, text=message, font=('微软雅黑', 11), justify=tk.CENTER).pack(pady=15)
+
+        # 按钮区域
+        btn_frame = tk.Frame(popup)
+        btn_frame.pack(pady=10)
+
+        # 打印按钮（如果有记录）
+        if record:
+            print_btn = tk.Button(
+                btn_frame,
+                text="🖨️ 打印小票",
+                command=lambda: [popup.destroy(), self.print_receipt(record)],
+                font=('微软雅黑', 11),
+                bg='#3498db',
+                fg='white',
+                width=12
+            )
+            print_btn.pack(side=tk.LEFT, padx=5)
+
+            preview_btn = tk.Button(
+                btn_frame,
+                text="👁️ 预览",
+                command=lambda: self.show_receipt_preview(record),
+                font=('微软雅黑', 11),
+                bg='#9b59b6',
+                fg='white',
+                width=10
+            )
+            preview_btn.pack(side=tk.LEFT, padx=5)
+
+        # 确定按钮
+        ok_btn = tk.Button(
+            btn_frame,
+            text="确定",
+            command=popup.destroy,
+            font=('微软雅黑', 11),
+            bg='#27ae60',
+            fg='white',
+            width=10
+        )
+        if record:
+            ok_btn.pack(side=tk.LEFT, padx=5)
+        else:
+            ok_btn.pack(pady=5)
+
+        # 3秒后自动关闭（如果没有操作）
+        popup.after(5000, popup.destroy)
     
     def clear_form(self):
         """清空表单"""
@@ -1416,8 +1520,10 @@ class AccountingApp:
             self.save_records()
             self.refresh_display()
             return_window.destroy()
-            
-            messagebox.showinfo("成功", f"退货成功！\n退货: {total_qty}套 ({len(items)}种)\n退款: ¥{total_amount:.2f}")
+
+            # 显示成功提示，支持打印
+            success_msg = f"退货成功！\n退货: {total_qty}套 ({len(items)}种)\n退款: ¥{total_amount:.2f}"
+            self.show_success_message(success_msg, return_record)
         
         tk.Button(btn_frame, text="✅ 确认退货", command=do_return,
                   font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=12).pack(side=tk.LEFT, padx=10)
@@ -2075,6 +2181,355 @@ class AccountingApp:
             fg='white',
             width=10
         ).pack(side=tk.LEFT, padx=5)
+
+    # ==================== 小票打印相关方法 ====================
+
+    def print_receipt(self, record):
+        """打印小票"""
+        try:
+            # 生成小票文本
+            receipt_text = self.receipt_printer.format_receipt(record)
+
+            # 获取用户选择的打印机
+            printer_name = self.printer_settings.get('printer_name', '')
+
+            # 打印到Windows打印机
+            result = self.receipt_printer.print_to_windows_printer(receipt_text, printer_name if printer_name else None)
+
+            if result['success']:
+                messagebox.showinfo("打印成功", result['message'])
+            else:
+                # 打印失败，提供保存为文本的选项
+                if messagebox.askyesno("打印失败", f"{result['message']}\n\n是否将小票保存为文本文件？"):
+                    self.save_receipt_as_text(record)
+        except Exception as e:
+            messagebox.showerror("打印错误", f"打印失败: {str(e)}")
+
+    def save_receipt_as_text(self, record):
+        """保存小票为文本文件"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+            initialfile=f"小票_{record.get('id', '0000')}_{record.get('date', '')}.txt"
+        )
+
+        if file_path:
+            try:
+                receipt_text = self.receipt_printer.format_receipt(record)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(receipt_text)
+                messagebox.showinfo("保存成功", f"小票已保存到:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("保存失败", f"保存失败: {str(e)}")
+
+    def show_receipt_preview(self, record):
+        """显示小票预览"""
+        preview_window = tk.Toplevel(self.root)
+        preview_window.title("小票预览")
+        preview_window.geometry("450x650")
+        preview_window.transient(self.root)
+
+        # 标题
+        tk.Label(
+            preview_window,
+            text="🧾 小票预览",
+            font=('微软雅黑', 14, 'bold')
+        ).pack(pady=10)
+
+        # 创建文本框显示小票内容
+        text_frame = tk.Frame(preview_window)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        scrollbar = tk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        receipt_text = self.receipt_printer.format_receipt(record)
+
+        text_widget = tk.Text(
+            text_frame,
+            font=('Courier New', 10),
+            width=40,
+            height=25,
+            yscrollcommand=scrollbar.set,
+            wrap=tk.NONE
+        )
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=text_widget.yview)
+
+        text_widget.insert('1.0', receipt_text)
+        text_widget.config(state='disabled')
+
+        # 按钮区域
+        btn_frame = tk.Frame(preview_window)
+        btn_frame.pack(pady=15)
+
+        tk.Button(
+            btn_frame,
+            text="🖨️ 打印",
+            command=lambda: [preview_window.destroy(), self.print_receipt(record)],
+            font=('微软雅黑', 11),
+            bg='#3498db',
+            fg='white',
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_frame,
+            text="💾 保存",
+            command=lambda: self.save_receipt_as_text(record),
+            font=('微软雅黑', 11),
+            bg='#9b59b6',
+            fg='white',
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_frame,
+            text="关闭",
+            command=preview_window.destroy,
+            font=('微软雅黑', 11),
+            bg='#95a5a6',
+            fg='white',
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+
+    def show_printer_settings(self):
+        """显示打印设置窗口"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("🖨️ 打印设置")
+        settings_window.geometry("500x650")
+        settings_window.transient(self.root)
+        settings_window.grab_set()
+
+        # 创建Canvas和Scrollbar以支持滚动
+        canvas = tk.Canvas(settings_window)
+        scrollbar = tk.Scrollbar(settings_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # 标题
+        tk.Label(
+            scrollable_frame,
+            text="🖨️ 小票打印设置",
+            font=('微软雅黑', 16, 'bold')
+        ).pack(pady=15)
+
+        # ========== 打印机选择区域 ==========
+        printer_frame = tk.LabelFrame(
+            scrollable_frame,
+            text="打印机设置",
+            font=('微软雅黑', 11, 'bold')
+        )
+        printer_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        # 获取打印机列表
+        printers = get_printer_list()
+        printer_choices = ["使用系统默认打印机"] + printers
+
+        tk.Label(printer_frame, text="选择打印机:", font=('微软雅黑', 10)).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        printer_var = tk.StringVar(value=self.printer_settings.get('printer_name', '') or "使用系统默认打印机")
+        printer_combo = ttk.Combobox(printer_frame, values=printer_choices, width=30, font=('微软雅黑', 10), state='readonly')
+        printer_combo.set(printer_var.get())
+        printer_combo.grid(row=0, column=1, padx=10, pady=5)
+
+        # 刷新打印机列表按钮
+        def refresh_printers():
+            printers = get_printer_list()
+            printer_choices = ["使用系统默认打印机"] + printers
+            printer_combo['values'] = printer_choices
+            messagebox.showinfo("提示", f"找到 {len(printers)} 台打印机")
+
+        tk.Button(printer_frame, text="🔄 刷新", command=refresh_printers,
+                  font=('微软雅黑', 9), bg='#3498db', fg='white').grid(row=0, column=2, padx=5, pady=5)
+
+        # 纸张宽度选择
+        tk.Label(printer_frame, text="纸张宽度:", font=('微软雅黑', 10)).grid(row=1, column=0, sticky='w', padx=10, pady=5)
+        paper_width_var = tk.IntVar(value=self.printer_settings.get('paper_width', 58))
+        paper_frame = tk.Frame(printer_frame)
+        paper_frame.grid(row=1, column=1, sticky='w', padx=10, pady=5)
+        tk.Radiobutton(paper_frame, text="58mm", variable=paper_width_var, value=58, font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(paper_frame, text="80mm", variable=paper_width_var, value=80, font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
+
+        # 自动打印选项
+        auto_print_var = tk.BooleanVar(value=self.printer_settings.get('auto_print', False))
+        tk.Checkbutton(printer_frame, text="销售/退货后自动打印小票", variable=auto_print_var,
+                       font=('微软雅黑', 10)).grid(row=2, column=0, columnspan=2, sticky='w', padx=10, pady=5)
+
+        # ========== 店铺信息区域 ==========
+        shop_frame = tk.LabelFrame(
+            scrollable_frame,
+            text="店铺信息",
+            font=('微软雅黑', 11, 'bold')
+        )
+        shop_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        # 店名
+        tk.Label(shop_frame, text="店铺名称:", font=('微软雅黑', 10)).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        shop_name_var = tk.StringVar(value=self.printer_settings.get('shop_name', '家纺四件套'))
+        tk.Entry(shop_frame, textvariable=shop_name_var, font=('微软雅黑', 10), width=35).grid(row=0, column=1, padx=10, pady=5)
+
+        # 地址
+        tk.Label(shop_frame, text="店铺地址:", font=('微软雅黑', 10)).grid(row=1, column=0, sticky='w', padx=10, pady=5)
+        shop_address_var = tk.StringVar(value=self.printer_settings.get('shop_address', ''))
+        tk.Entry(shop_frame, textvariable=shop_address_var, font=('微软雅黑', 10), width=35).grid(row=1, column=1, padx=10, pady=5)
+
+        # 电话
+        tk.Label(shop_frame, text="联系电话:", font=('微软雅黑', 10)).grid(row=2, column=0, sticky='w', padx=10, pady=5)
+        shop_phone_var = tk.StringVar(value=self.printer_settings.get('shop_phone', ''))
+        tk.Entry(shop_frame, textvariable=shop_phone_var, font=('微软雅黑', 10), width=35).grid(row=2, column=1, padx=10, pady=5)
+
+        # ========== 小票样式区域 ==========
+        style_frame = tk.LabelFrame(
+            scrollable_frame,
+            text="小票样式",
+            font=('微软雅黑', 11, 'bold')
+        )
+        style_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        # 底部文字
+        tk.Label(style_frame, text="底部文字:", font=('微软雅黑', 10)).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        footer_var = tk.StringVar(value=self.printer_settings.get('footer_text', '谢谢惠顾，欢迎下次光临！'))
+        tk.Entry(style_frame, textvariable=footer_var, font=('微软雅黑', 10), width=35).grid(row=0, column=1, padx=10, pady=5)
+
+        # ========== 预览区域 ==========
+        preview_frame = tk.LabelFrame(
+            scrollable_frame,
+            text="小票预览",
+            font=('微软雅黑', 11, 'bold')
+        )
+        preview_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        preview_text = tk.Text(preview_frame, font=('Courier New', 9), width=50, height=12)
+        preview_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        def update_preview():
+            """更新预览"""
+            test_record = {
+                "id": 8888,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "created_at": datetime.now().strftime("%H:%M:%S"),
+                "quantity": 2,
+                "unit_price": 280.00,
+                "total_amount": 560.00,
+                "note": "测试预览",
+                "items": [
+                    {"quantity": 2, "unit_price": 280.00}
+                ]
+            }
+
+            # 临时更新设置
+            temp_printer = ReceiptPrinter()
+            temp_printer.receipt_width = 32 if paper_width_var.get() == 58 else 48
+            temp_printer.set_shop_info(
+                name=shop_name_var.get(),
+                address=shop_address_var.get(),
+                phone=shop_phone_var.get()
+            )
+            temp_printer.footer_text = footer_var.get()
+
+            preview_text.delete('1.0', tk.END)
+            preview_text.insert('1.0', temp_printer.format_receipt(test_record))
+
+        # 初始预览
+        update_preview()
+
+        # 预览按钮
+        tk.Button(
+            scrollable_frame,
+            text="👁️ 更新预览",
+            command=update_preview,
+            font=('微软雅黑', 10),
+            bg='#9b59b6',
+            fg='white'
+        ).pack(pady=5)
+
+        # ========== 按钮区域 ==========
+        btn_frame = tk.Frame(scrollable_frame)
+        btn_frame.pack(pady=15)
+
+        def save_settings():
+            """保存设置"""
+            selected_printer = printer_combo.get()
+            printer_name = "" if selected_printer == "使用系统默认打印机" else selected_printer
+
+            settings = {
+                'shop_name': shop_name_var.get(),
+                'shop_address': shop_address_var.get(),
+                'shop_phone': shop_phone_var.get(),
+                'footer_text': footer_var.get(),
+                'printer_name': printer_name,
+                'paper_width': paper_width_var.get(),
+                'auto_print': auto_print_var.get()
+            }
+
+            # 更新当前打印机设置
+            self.receipt_printer.receipt_width = 32 if paper_width_var.get() == 58 else 48
+            self.receipt_printer.set_shop_info(
+                name=settings['shop_name'],
+                address=settings['shop_address'],
+                phone=settings['shop_phone']
+            )
+            self.receipt_printer.footer_text = settings['footer_text']
+
+            # 保存到文件
+            self.save_printer_settings(settings)
+
+            messagebox.showinfo("保存成功", "打印设置已保存！\n设置将在下次打印时生效。")
+            settings_window.destroy()
+
+        tk.Button(
+            btn_frame,
+            text="✅ 保存设置",
+            command=save_settings,
+            font=('微软雅黑', 11),
+            bg='#27ae60',
+            fg='white',
+            width=12
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            btn_frame,
+            text="❌ 取消",
+            command=settings_window.destroy,
+            font=('微软雅黑', 11),
+            bg='#e74c3c',
+            fg='white',
+            width=10
+        ).pack(side=tk.LEFT, padx=5)
+
+        # 布局Canvas和Scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def print_selected_record(self):
+        """打印选中的记录"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择要打印的记录")
+            return
+
+        item = selected[0]
+        values = self.tree.item(item, 'values')
+        record_id = int(values[0])
+
+        # 找到对应记录
+        record = None
+        for r in self.records:
+            if r['id'] == record_id:
+                record = r
+                break
+
+        if record:
+            self.show_receipt_preview(record)
+        else:
+            messagebox.showerror("错误", "未找到记录")
 
 
 def main():
