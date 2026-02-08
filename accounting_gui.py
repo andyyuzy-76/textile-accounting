@@ -26,7 +26,7 @@ import time
 from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "0.4"
+VERSION = "0.5"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -2601,13 +2601,14 @@ class AccountingApp:
 
         def download_thread():
             try:
-                # 获取当前EXE路径
+                # 获取当前EXE路径和目录
                 current_exe = sys.executable
+                exe_dir = os.path.dirname(current_exe)
 
                 # 创建临时下载路径
                 temp_dir = os.path.join(self.data_dir, 'update')
                 os.makedirs(temp_dir, exist_ok=True)
-                new_exe_path = os.path.join(temp_dir, f'家纺记账系统v{new_version}.exe')
+                downloaded_exe = os.path.join(temp_dir, 'new_version.exe')
 
                 # 下载文件
                 status_label.config(text="正在下载...")
@@ -2620,7 +2621,7 @@ class AccountingApp:
                     downloaded = 0
                     chunk_size = 8192
 
-                    with open(new_exe_path, 'wb') as f:
+                    with open(downloaded_exe, 'wb') as f:
                         while True:
                             chunk = response.read(chunk_size)
                             if not chunk:
@@ -2633,7 +2634,7 @@ class AccountingApp:
 
                 # 下载完成
                 self.root.after(0, progress_window.destroy)
-                self.root.after(0, lambda: self.install_update(new_exe_path, current_exe))
+                self.root.after(0, lambda: self.install_update(downloaded_exe, current_exe, exe_dir, new_version))
 
             except Exception as e:
                 self.root.after(0, progress_window.destroy)
@@ -2644,35 +2645,66 @@ class AccountingApp:
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()
 
-    def install_update(self, new_exe_path, current_exe):
+    def install_update(self, downloaded_exe, current_exe, exe_dir, new_version):
         """安装更新：创建批处理脚本替换旧版本"""
         # 确认安装
-        if not messagebox.askyesno("安装更新", f"新版本已下载完成！\n\n点击「是」关闭程序并安装更新\n程序将自动重启"):
+        if not messagebox.askyesno("安装更新", f"新版本 v{new_version} 已下载完成！\n\n点击「是」关闭程序并安装更新\n程序将自动重启"):
             self.upgrade_status_var.set("⏸️ 更新已取消")
             return
 
         try:
+            # 使用固定的新文件名（不带版本号，方便后续更新）
+            new_exe_name = "家纺记账系统.exe"
+            new_exe_path = os.path.join(exe_dir, new_exe_name)
+            old_exe_backup = os.path.join(exe_dir, "家纺记账系统.exe.old")
+            current_backup = current_exe + ".old"
+
             # 创建批处理脚本
             batch_path = os.path.join(self.data_dir, 'update.bat')
-            old_exe_backup = current_exe + '.old'
 
             batch_content = f'''@echo off
 chcp 65001 >nul
-echo 正在安装更新...
+echo ==========================================
+echo   正在安装更新 v{new_version}...
+echo ==========================================
+echo.
 timeout /t 2 /nobreak >nul
 
-REM 删除旧备份（如果有）
-if exist "{old_exe_backup}" del /f "{old_exe_backup}"
+REM 等待原程序完全退出
+echo 等待程序退出...
+timeout /t 3 /nobreak >nul
 
-REM 备份当前EXE
-ren "{current_exe}" "{os.path.basename(old_exe_backup)}"
+REM 删除旧备份文件（如果存在）
+if exist "{current_backup}" del /f "{current_backup}" 2>nul
+if exist "{old_exe_backup}" del /f "{old_exe_backup}" 2>nul
 
-REM 移动新版本到原位置
-move /y "{new_exe_path}" "{current_exe}"
+REM 备份当前EXE（重命名为 .old）
+echo 备份当前版本...
+ren "{current_exe}" "{os.path.basename(current_backup)}" 2>nul
+
+REM 将新版本复制为固定文件名
+echo 安装新版本...
+copy /y "{downloaded_exe}" "{new_exe_path}" >nul
+
+REM 检查复制是否成功
+if not exist "{new_exe_path}" (
+    echo 安装失败，恢复旧版本...
+    ren "{current_backup}" "{os.path.basename(current_exe)}" 2>nul
+    echo 更新失败，请手动下载安装。
+    pause
+    exit /b 1
+)
 
 REM 启动新版本
-echo 正在启动新版本...
-start "" "{current_exe}"
+echo.
+echo ==========================================
+echo   启动新版本...
+echo ==========================================
+timeout /t 1 /nobreak >nul
+start "" "{new_exe_path}"
+
+REM 清理临时文件
+del /f "{downloaded_exe}" 2>nul
 
 REM 删除自己
 del /f "%~f0"
