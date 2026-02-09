@@ -32,23 +32,24 @@ class ReceiptPrinter:
         if phone:
             self.shop_phone = phone
     
-    def format_receipt(self, record: Dict, compact: bool = True) -> str:
+    def format_receipt(self, record: Dict, compact: bool = True, return_records: list = None) -> str:
         """
         格式化小票内容
         
         参数:
             record: 记录字典，包含 date, items, total_amount, quantity, note 等
             compact: 是否使用紧凑模式（默认True，适合58mm小票一张纸）
+            return_records: 关联的退货记录列表（可选）
         
         返回:
             格式化后的小票文本
         """
         if compact:
-            return self._format_compact_receipt(record)
+            return self._format_compact_receipt(record, return_records)
         else:
-            return self._format_standard_receipt(record)
+            return self._format_standard_receipt(record, return_records)
     
-    def _format_compact_receipt(self, record: Dict) -> str:
+    def _format_compact_receipt(self, record: Dict, return_records: list = None) -> str:
         """紧凑格式小票 - 适合58mm热敏纸一张打印，左对齐充分利用纸张宽度"""
         lines = []
         # 58mm纸张实际可用宽度约32个字符（中文占2字符）
@@ -97,6 +98,24 @@ class ReceiptPrinter:
         total_qty = abs(record.get('quantity', 0))
         lines.append("-" * 16)
         lines.append(f"共{total_qty}套 ¥{total_amount:.0f}")
+        
+        # 如果有退货记录，显示退货明细和净额
+        if return_records:
+            lines.append("")
+            lines.append("【退货明细】")
+            return_total = 0
+            return_qty_total = 0
+            for i, ret in enumerate(return_records, 1):
+                ret_qty = abs(ret.get('quantity', 0))
+                ret_amount = abs(ret.get('total_amount', 0))
+                return_qty_total += ret_qty
+                return_total += ret_amount
+                lines.append(f"退{i}.x{ret_qty}=¥{ret_amount:.0f}")
+            lines.append("-" * 16)
+            lines.append(f"退货合计:{return_qty_total}套 ¥{return_total:.0f}")
+            # 净额
+            net_amount = total_amount - return_total
+            lines.append(f"实付金额:¥{net_amount:.0f}")
         
         # 备注（超短）
         note = record.get('note', '')
