@@ -342,7 +342,7 @@ class AccountingApp:
         # 表格（树形显示：购买记录为父节点，退货为子节点）
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=('ID', '日期', '数量', '单价', '总金额', '备注'),
+            columns=('ID', '日期', '数量', '明细', '总金额', '备注'),
             show='tree headings',  # 显示树形结构 + 列标题
             yscrollcommand=scrollbar_y.set,
             xscrollcommand=scrollbar_x.set
@@ -355,16 +355,16 @@ class AccountingApp:
         self.tree.heading('ID', text='ID')
         self.tree.heading('日期', text='📅 日期')
         self.tree.heading('数量', text='📦 数量')
-        self.tree.heading('单价', text='💰 单价')
+        self.tree.heading('明细', text='📋 明细')
         self.tree.heading('总金额', text='💵 总金额')
         self.tree.heading('备注', text='📝 备注')
         
         self.tree.column('ID', width=50, anchor='center')
         self.tree.column('日期', width=100, anchor='center')
         self.tree.column('数量', width=70, anchor='center')
-        self.tree.column('单价', width=80, anchor='center')
+        self.tree.column('明细', width=180, anchor='w')
         self.tree.column('总金额', width=90, anchor='center')
-        self.tree.column('备注', width=180)
+        self.tree.column('备注', width=120, anchor='w')
         
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -384,7 +384,7 @@ class AccountingApp:
         self.context_menu.add_command(label="🖨️ 打印小票", command=self.print_selected_record)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="📝 编辑备注", command=self.edit_note)
-        self.context_menu.add_command(label="✏️ 编辑数量单价", command=self.edit_quantity_price)
+        self.context_menu.add_command(label="✏️ 编辑明细", command=self.edit_quantity_price)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="🔄 部分退货", command=self.convert_to_return)
         self.context_menu.add_separator()
@@ -889,22 +889,34 @@ class AccountingApp:
         is_return = record.get('type') == 'return' or quantity < 0
         is_child = parent != ''  # 是否为子节点（关联退货）
         
-        # 获取备注，如果有多商品则显示商品数
+        # 获取备注
         note = record.get('note', '')
+        
+        # 格式化明细显示
         items = record.get('items', [])
-        if items and len(items) > 1:
-            # 多商品记录，显示商品种类数
-            items_info = f"[{len(items)}种]"
-            if note:
-                note = f"{items_info} {note}"
-            else:
-                note = items_info
+        if items:
+            # 多商品记录，生成明细字符串
+            item_parts = []
+            for item in items:
+                qty = abs(item.get('quantity', 0))
+                price = item.get('unit_price', 0)
+                subtotal = qty * price
+                item_parts.append(f"{qty}套@{price:.0f}={subtotal:.0f}")
+            detail_display = ", ".join(item_parts)
+            # 截断过长的明细
+            if len(detail_display) > 25:
+                detail_display = detail_display[:22] + "..."
+        else:
+            # 兼容旧数据：单商品
+            qty = abs(quantity)
+            price = record.get('unit_price', 0)
+            detail_display = f"{qty}套@{price:.0f}={total:.0f}"
         
         # 格式化显示
         if is_return:
             qty_display = f"-{abs(quantity)}"
             total_display = f"-¥{abs(total):.2f}"
-            note_display = note[:18] + ('...' if len(note) > 18 else '')
+            note_display = note[:15] + ('...' if len(note) > 15 else '')
             if is_child:
                 tags = ('child_return',)
             else:
@@ -912,14 +924,8 @@ class AccountingApp:
         else:
             qty_display = str(quantity)
             total_display = f"¥{total:.2f}"
-            note_display = note[:20] + ('...' if len(note) > 20 else '')
+            note_display = note[:15] + ('...' if len(note) > 15 else '')
             tags = ()
-        
-        # 单价显示：多商品时显示"多价"，单商品显示实际单价
-        if items and len(items) > 1:
-            price_display = "多价"
-        else:
-            price_display = f"¥{record['unit_price']:.2f}"
         
         # 树形显示文本（子节点显示↳符号）
         tree_text = "↳" if is_child else ""
@@ -928,7 +934,7 @@ class AccountingApp:
             record['id'],
             record['date'],
             qty_display,
-            price_display,
+            detail_display,
             total_display,
             note_display
         ), tags=tags, open=True)
@@ -1238,7 +1244,7 @@ class AccountingApp:
         note_text.bind('<Control-Return>', lambda e: save_note())
     
     def edit_quantity_price(self):
-        """编辑选中记录的数量和单价"""
+        """编辑选中记录的明细（支持添加/删除商品）"""
         selected = self.tree.selection()
         if not selected:
             messagebox.showwarning("提示", "请先选择要编辑的记录")
@@ -1261,8 +1267,8 @@ class AccountingApp:
         
         # 创建编辑窗口
         edit_window = tk.Toplevel(self.root)
-        edit_window.title(f"编辑数量单价 - 记录#{record_id}")
-        edit_window.geometry("400x280")
+        edit_window.title(f"编辑明细 - 记录#{record_id}")
+        edit_window.geometry("420x400")
         edit_window.transient(self.root)
         edit_window.grab_set()
         
@@ -1273,72 +1279,169 @@ class AccountingApp:
         tk.Label(info_frame, text=f"📅 日期: {record['date']}", font=('微软雅黑', 10)).pack(anchor='w')
         tk.Label(info_frame, text=f"📝 备注: {record.get('note', '')[:30]}", font=('微软雅黑', 10)).pack(anchor='w')
         
-        # 编辑区
-        form_frame = tk.Frame(edit_window)
-        form_frame.pack(fill=tk.X, padx=15, pady=10)
+        # 商品明细列表
+        list_frame = tk.LabelFrame(edit_window, text="商品明细", font=('微软雅黑', 11))
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         
-        tk.Label(form_frame, text="📦 数量:", font=('微软雅黑', 11)).grid(row=0, column=0, sticky='w', pady=5)
-        qty_var = tk.StringVar(value=str(abs(record['quantity'])))
-        qty_entry = tk.Entry(form_frame, textvariable=qty_var, font=('微软雅黑', 11), width=15)
-        qty_entry.grid(row=0, column=1, pady=5, padx=10)
+        # 商品列表（Listbox）
+        listbox_frame = tk.Frame(list_frame)
+        listbox_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        tk.Label(form_frame, text="💰 单价:", font=('微软雅黑', 11)).grid(row=1, column=0, sticky='w', pady=5)
-        price_var = tk.StringVar(value=str(record['unit_price']))
-        price_entry = tk.Entry(form_frame, textvariable=price_var, font=('微软雅黑', 11), width=15)
-        price_entry.grid(row=1, column=1, pady=5, padx=10)
+        scrollbar = tk.Scrollbar(listbox_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # 实时计算总金额
-        total_label = tk.Label(form_frame, text=f"💵 总金额: ¥{abs(record['total_amount']):.2f}", font=('微软雅黑', 11, 'bold'))
-        total_label.grid(row=2, column=0, columnspan=2, sticky='w', pady=10)
+        items_listbox = tk.Listbox(
+            listbox_frame,
+            font=('微软雅黑', 10),
+            height=6,
+            yscrollcommand=scrollbar.set
+        )
+        items_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=items_listbox.yview)
         
-        def update_total(*args):
+        # 当前商品列表
+        items = record.get('items', [])
+        if not items:
+            # 兼容旧数据，创建单商品
+            items = [{
+                'quantity': abs(record['quantity']),
+                'unit_price': record['unit_price']
+            }]
+        record['items'] = items
+        
+        # 填充列表
+        def refresh_list():
+            items_listbox.delete(0, tk.END)
+            total_qty = 0
+            total_amount = 0.0
+            for i, item in enumerate(items):
+                qty = item.get('quantity', 0)
+                price = item.get('unit_price', 0)
+                subtotal = qty * price
+                total_qty += qty
+                total_amount += subtotal
+                items_listbox.insert(tk.END, f"{qty}套 @ ¥{price:.0f} = ¥{subtotal:.0f}    [删除]")
+            total_qty_label.config(text=f"总数量: {total_qty}套")
+            total_amount_label.config(text=f"总金额: ¥{total_amount:.2f}")
+            return total_qty, total_amount
+        
+        current_total_qty, current_total_amount = refresh_list()
+        
+        def delete_item():
+            """删除选中商品"""
+            selected_idx = items_listbox.curselection()
+            if not selected_idx:
+                messagebox.showwarning("提示", "请先选择要删除的商品")
+                return
+            
+            idx = selected_idx[0]
+            del items[idx]
+            refresh_list()
+        
+        # 删除按钮
+        del_btn = tk.Button(list_frame, text="🗑️ 删除选中商品", command=delete_item,
+                          font=('微软雅黑', 10), bg='#e74c3c', fg='white')
+        del_btn.pack(pady=5)
+        
+        # 添加商品区
+        add_frame = tk.LabelFrame(edit_window, text="添加商品", font=('微软雅黑', 11))
+        add_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        form_frame = tk.Frame(add_frame)
+        form_frame.pack(pady=10)
+        
+        tk.Label(form_frame, text="📦 数量:", font=('微软雅黑', 11)).grid(row=0, column=0, sticky='w', pady=5, padx=5)
+        add_qty_var = tk.StringVar(value="1")
+        add_qty_entry = tk.Entry(form_frame, textvariable=add_qty_var, font=('微软雅黑', 11), width=10)
+        add_qty_entry.grid(row=0, column=1, pady=5, padx=5)
+        
+        tk.Label(form_frame, text="💰 单价:", font=('微软雅黑', 11)).grid(row=0, column=2, sticky='w', pady=5, padx=5)
+        add_price_var = tk.StringVar(value="")
+        add_price_entry = tk.Entry(form_frame, textvariable=add_price_var, font=('微软雅黑', 11), width=10)
+        add_price_entry.grid(row=0, column=3, pady=5, padx=5)
+        
+        def add_item():
+            """添加新商品"""
             try:
-                qty = int(qty_var.get() or 0)
-                price = float(price_var.get() or 0)
-                total_label.config(text=f"💵 总金额: ¥{qty * price:.2f}")
-            except:
-                pass
-        
-        qty_var.trace_add('write', update_total)
-        price_var.trace_add('write', update_total)
-        
-        qty_entry.focus_set()
-        
-        # 按钮区
-        btn_frame = tk.Frame(edit_window)
-        btn_frame.pack(pady=20)
-        
-        def save_changes():
-            try:
-                new_qty = int(qty_var.get())
-                new_price = float(price_var.get())
+                qty = int(add_qty_var.get())
+                price = float(add_price_var.get())
                 
-                if new_qty <= 0 or new_price <= 0:
+                if qty <= 0 or price <= 0:
                     messagebox.showerror("错误", "数量和单价必须大于0")
                     return
                 
-                # 保持原有的正负号（退货记录数量为负）
-                if record['quantity'] < 0:
-                    new_qty = -new_qty
+                items.append({
+                    'quantity': qty,
+                    'unit_price': price
+                })
                 
-                record['quantity'] = new_qty
-                record['unit_price'] = new_price
-                record['total_amount'] = new_qty * new_price
+                refresh_list()
                 
-                self.save_records()
-                self.refresh_display()
-                edit_window.destroy()
-                messagebox.showinfo("成功", "记录已更新")
+                # 清空输入框，准备添加下一个
+                add_qty_var.set("1")
+                add_price_var.set("")
+                add_qty_entry.focus_set()
+                
             except ValueError:
                 messagebox.showerror("错误", "请输入有效的数字")
+        
+        add_btn = tk.Button(form_frame, text="➕ 添加商品", command=add_item,
+                           font=('微软雅黑', 11), bg='#3498db', fg='white', width=12)
+        add_btn.grid(row=1, column=0, columnspan=4, pady=10)
+        
+        # 总计区
+        total_frame = tk.Frame(edit_window, bg='#ecf0f1')
+        total_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        total_qty_label = tk.Label(total_frame, text=f"总数量: {current_total_qty}套", 
+                                  font=('微软雅黑', 11, 'bold'), bg='#ecf0f1')
+        total_qty_label.pack(side=tk.LEFT, padx=20)
+        
+        total_amount_label = tk.Label(total_frame, text=f"总金额: ¥{current_total_amount:.2f}", 
+                                     font=('微软雅黑', 11, 'bold'), bg='#ecf0f1', fg='#e74c3c')
+        total_amount_label.pack(side=tk.RIGHT, padx=20)
+        
+        # 按钮区
+        btn_frame = tk.Frame(edit_window)
+        btn_frame.pack(pady=15)
+        
+        def save_changes():
+            """保存修改"""
+            if not items:
+                messagebox.showerror("错误", "请至少添加一个商品")
+                return
+            
+            # 保持原有的正负号（退货记录数量为负）
+            is_return = record.get('type') == 'return' or record['quantity'] < 0
+            
+            # 计算总数量和总金额
+            total_qty = sum(item.get('quantity', 0) for item in items)
+            total_amount = sum(item.get('quantity', 0) * item.get('unit_price', 0) for item in items)
+            
+            if is_return:
+                record['quantity'] = -total_qty
+                record['total_amount'] = -total_amount
+            else:
+                record['quantity'] = total_qty
+                record['total_amount'] = total_amount
+            
+            # 保持unit_price为第一个商品的单价（兼容旧数据）
+            record['unit_price'] = items[0].get('unit_price', 0)
+            record['items'] = items
+            
+            self.save_records()
+            self.refresh_display()
+            edit_window.destroy()
+            messagebox.showinfo("成功", "记录已更新")
         
         tk.Button(btn_frame, text="✅ 确认", command=save_changes,
                   font=('微软雅黑', 11), bg='#27ae60', fg='white', width=10).pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text="❌ 取消", command=edit_window.destroy,
                   font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=10).pack(side=tk.LEFT, padx=10)
         
-        qty_entry.bind('<Return>', lambda e: price_entry.focus())
-        price_entry.bind('<Return>', lambda e: save_changes())
+        # 快捷键
+        add_qty_entry.bind('<Return>', lambda e: add_price_entry.focus())
+        add_price_entry.bind('<Return>', lambda e: add_item())
         edit_window.bind('<Control-Return>', lambda e: save_changes())
     
     def convert_to_return(self):
