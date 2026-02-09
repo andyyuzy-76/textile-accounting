@@ -1339,27 +1339,26 @@ class AccountingApp:
             del items[idx]
             refresh_list()
         
-        # 删除按钮
-        del_btn = tk.Button(list_frame, text="🗑️ 删除选中商品", command=delete_item,
-                          font=('微软雅黑', 10), bg='#e74c3c', fg='white')
-        del_btn.pack(pady=5)
+        # 删除按钮和添加表单放在同一行
+        action_frame = tk.Frame(list_frame)
+        action_frame.pack(fill=tk.X, pady=5)
         
-        # 添加商品区
-        add_frame = tk.LabelFrame(edit_window, text="添加商品", font=('微软雅黑', 11))
-        add_frame.pack(fill=tk.X, padx=15, pady=10)
+        del_btn = tk.Button(action_frame, text="🗑️ 删除选中", command=delete_item,
+                          font=('微软雅黑', 10), bg='#e74c3c', fg='white', width=12)
+        del_btn.pack(side=tk.LEFT, padx=5)
         
-        form_frame = tk.Frame(add_frame)
-        form_frame.pack(pady=10)
+        # 添加商品表单（内联）
+        tk.Label(action_frame, text=" 添加：", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=(20, 5))
         
-        tk.Label(form_frame, text="📦 数量:", font=('微软雅黑', 11)).grid(row=0, column=0, sticky='w', pady=5, padx=5)
+        tk.Label(action_frame, text="数量:", font=('微软雅黑', 10)).pack(side=tk.LEFT)
         add_qty_var = tk.StringVar(value="1")
-        add_qty_entry = tk.Entry(form_frame, textvariable=add_qty_var, font=('微软雅黑', 11), width=10)
-        add_qty_entry.grid(row=0, column=1, pady=5, padx=5)
+        add_qty_entry = tk.Entry(action_frame, textvariable=add_qty_var, font=('微软雅黑', 10), width=8)
+        add_qty_entry.pack(side=tk.LEFT, padx=5)
         
-        tk.Label(form_frame, text="💰 单价:", font=('微软雅黑', 11)).grid(row=0, column=2, sticky='w', pady=5, padx=5)
+        tk.Label(action_frame, text="单价:", font=('微软雅黑', 10)).pack(side=tk.LEFT)
         add_price_var = tk.StringVar(value="")
-        add_price_entry = tk.Entry(form_frame, textvariable=add_price_var, font=('微软雅黑', 11), width=10)
-        add_price_entry.grid(row=0, column=3, pady=5, padx=5)
+        add_price_entry = tk.Entry(action_frame, textvariable=add_price_var, font=('微软雅黑', 10), width=8)
+        add_price_entry.pack(side=tk.LEFT, padx=5)
         
         def add_item():
             """添加新商品"""
@@ -1378,7 +1377,7 @@ class AccountingApp:
                 
                 refresh_list()
                 
-                # 清空输入框，准备添加下一个
+                # 清空输入框
                 add_qty_var.set("1")
                 add_price_var.set("")
                 add_qty_entry.focus_set()
@@ -1386,9 +1385,9 @@ class AccountingApp:
             except ValueError:
                 messagebox.showerror("错误", "请输入有效的数字")
         
-        add_btn = tk.Button(form_frame, text="➕ 添加商品", command=add_item,
-                           font=('微软雅黑', 11), bg='#3498db', fg='white', width=12)
-        add_btn.grid(row=1, column=0, columnspan=4, pady=10)
+        add_btn = tk.Button(action_frame, text="➕ 添加", command=add_item,
+                          font=('微软雅黑', 10), bg='#3498db', fg='white', width=8)
+        add_btn.pack(side=tk.LEFT, padx=10)
         
         # 总计区
         total_frame = tk.Frame(edit_window, bg='#ecf0f1')
