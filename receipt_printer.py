@@ -50,10 +50,10 @@ class ReceiptPrinter:
             return self._format_standard_receipt(record, return_records)
     
     def _format_compact_receipt(self, record: Dict, return_records: list = None) -> str:
-        """紧凑格式小票 - 适合58mm热敏纸一张打印，左对齐充分利用纸张宽度"""
+        """紧凑格式小票 - 适合76mm热敏纸一张打印，左对齐充分利用纸张宽度"""
         lines = []
-        # 58mm纸张实际可用宽度约32个字符（中文占2字符）
-        width = 32
+        # 76mm纸张实际可用宽度约44个字符（中文占2字符）
+        width = 44
         
         # 店铺名称（左对齐，不居中）
         lines.append(self.shop_name[:16])  # 限制长度
@@ -75,7 +75,7 @@ class ReceiptPrinter:
         lines.append(f"{date} {created_at}")
         
         # 分隔线（一排）
-        lines.append("-" * 16)
+        lines.append("-" * 22)
         
         # 商品明细 - 超紧凑格式
         items = record.get('items', [])
@@ -84,19 +84,19 @@ class ReceiptPrinter:
             qty = abs(record.get('quantity', 0))
             price = record.get('unit_price', 0)
             subtotal = qty * price
-            lines.append(f"x{qty}套 ¥{subtotal:.0f}")
+            lines.append(f"{qty}套 @ ¥{price:.0f} = ¥{subtotal:.0f}")
         else:
             for i, item in enumerate(items, 1):
                 qty = abs(item.get('quantity', 0))
                 price = item.get('unit_price', 0)
                 subtotal = qty * price
-                # 更紧凑：序号.数量x单价=金额
-                lines.append(f"{i}.x{qty}@{price:.0f}=¥{subtotal:.0f}")
+                # 76mm纸张可以更宽松：序号.数量套@单价=金额
+                lines.append(f"{i}.{qty}套@¥{price:.0f}=¥{subtotal:.0f}")
         
         # 合计行
         total_amount = abs(record.get('total_amount', 0))
         total_qty = abs(record.get('quantity', 0))
-        lines.append("-" * 16)
+        lines.append("-" * 22)
         lines.append(f"共{total_qty}套 ¥{total_amount:.0f}")
         
         # 如果有退货记录，显示退货明细和净额
@@ -110,8 +110,8 @@ class ReceiptPrinter:
                 ret_amount = abs(ret.get('total_amount', 0))
                 return_qty_total += ret_qty
                 return_total += ret_amount
-                lines.append(f"退{i}.x{ret_qty}=¥{ret_amount:.0f}")
-            lines.append("-" * 16)
+                lines.append(f"退{i}.{ret_qty}套=¥{ret_amount:.0f}")
+            lines.append("-" * 22)
             lines.append(f"退货合计:{return_qty_total}套 ¥{return_total:.0f}")
             # 净额
             net_amount = total_amount - return_total
