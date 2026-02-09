@@ -106,7 +106,7 @@ class AccountingApp:
                         phone=self.printer_settings['shop_phone']
                     )
                     self.receipt_printer.footer_text = self.printer_settings['footer_text']
-                    self.receipt_printer.receipt_width = 32 if self.printer_settings['paper_width'] == 58 else 48
+                    self.receipt_printer.receipt_width = 32 if self.printer_settings['paper_width'] == 58 else (44 if self.printer_settings['paper_width'] == 76 else 48)
             except:
                 pass
 
@@ -2399,6 +2399,7 @@ class AccountingApp:
         paper_frame = tk.Frame(printer_frame)
         paper_frame.grid(row=1, column=1, sticky='w', padx=10, pady=5)
         tk.Radiobutton(paper_frame, text="58mm", variable=paper_width_var, value=58, font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(paper_frame, text="76mm", variable=paper_width_var, value=76, font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
         tk.Radiobutton(paper_frame, text="80mm", variable=paper_width_var, value=80, font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
 
         # 自动打印选项
@@ -2408,7 +2409,7 @@ class AccountingApp:
 
         # 紧凑模式选项
         compact_mode_var = tk.BooleanVar(value=self.printer_settings.get('compact_mode', True))
-        tk.Checkbutton(printer_frame, text="紧凑模式（一张纸打印，推荐58mm）", variable=compact_mode_var,
+        tk.Checkbutton(printer_frame, text="紧凑模式（一张纸打印，推荐58mm/76mm）", variable=compact_mode_var,
                        font=('微软雅黑', 10)).grid(row=3, column=0, columnspan=2, sticky='w', padx=10, pady=5)
 
         # ========== 店铺信息区域 ==========
@@ -2475,7 +2476,7 @@ class AccountingApp:
 
             # 临时更新设置
             temp_printer = ReceiptPrinter()
-            temp_printer.receipt_width = 32 if paper_width_var.get() == 58 else 48
+            temp_printer.receipt_width = 32 if paper_width_var.get() == 58 else (44 if paper_width_var.get() == 76 else 48)
             temp_printer.set_shop_info(
                 name=shop_name_var.get(),
                 address=shop_address_var.get(),
@@ -2521,7 +2522,7 @@ class AccountingApp:
             }
 
             # 更新当前打印机设置
-            self.receipt_printer.receipt_width = 32 if paper_width_var.get() == 58 else 48
+            self.receipt_printer.receipt_width = 32 if paper_width_var.get() == 58 else (44 if paper_width_var.get() == 76 else 48)
             self.receipt_printer.set_shop_info(
                 name=settings['shop_name'],
                 address=settings['shop_address'],
