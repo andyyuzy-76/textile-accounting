@@ -1339,25 +1339,23 @@ class AccountingApp:
             del items[idx]
             refresh_list()
         
-        # 删除按钮和添加表单放在同一行
-        action_frame = tk.Frame(list_frame)
-        action_frame.pack(fill=tk.X, pady=5)
+        # 删除按钮
+        del_btn = tk.Button(list_frame, text="🗑️ 删除选中商品", command=delete_item,
+                          font=('微软雅黑', 10), bg='#e74c3c', fg='white')
+        del_btn.pack(pady=5)
         
-        del_btn = tk.Button(action_frame, text="🗑️ 删除选中", command=delete_item,
-                          font=('微软雅黑', 10), bg='#e74c3c', fg='white', width=12)
-        del_btn.pack(side=tk.LEFT, padx=5)
+        # 添加商品表单（单独一行）
+        add_form_frame = tk.Frame(list_frame)
+        add_form_frame.pack(fill=tk.X, pady=10)
         
-        # 添加商品表单（内联）
-        tk.Label(action_frame, text=" 添加：", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=(20, 5))
-        
-        tk.Label(action_frame, text="数量:", font=('微软雅黑', 10)).pack(side=tk.LEFT)
+        tk.Label(add_form_frame, text="添加商品 - 数量:", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
         add_qty_var = tk.StringVar(value="1")
-        add_qty_entry = tk.Entry(action_frame, textvariable=add_qty_var, font=('微软雅黑', 10), width=8)
+        add_qty_entry = tk.Entry(add_form_frame, textvariable=add_qty_var, font=('微软雅黑', 10), width=8)
         add_qty_entry.pack(side=tk.LEFT, padx=5)
         
-        tk.Label(action_frame, text="单价:", font=('微软雅黑', 10)).pack(side=tk.LEFT)
+        tk.Label(add_form_frame, text="单价:", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
         add_price_var = tk.StringVar(value="")
-        add_price_entry = tk.Entry(action_frame, textvariable=add_price_var, font=('微软雅黑', 10), width=8)
+        add_price_entry = tk.Entry(add_form_frame, textvariable=add_price_var, font=('微软雅黑', 10), width=8)
         add_price_entry.pack(side=tk.LEFT, padx=5)
         
         def add_item():
@@ -1385,9 +1383,9 @@ class AccountingApp:
             except ValueError:
                 messagebox.showerror("错误", "请输入有效的数字")
         
-        add_btn = tk.Button(action_frame, text="➕ 添加", command=add_item,
-                          font=('微软雅黑', 10), bg='#3498db', fg='white', width=8)
-        add_btn.pack(side=tk.LEFT, padx=10)
+        add_btn = tk.Button(add_form_frame, text="➕ 添加", command=add_item,
+                          font=('微软雅黑', 10), bg='#3498db', fg='white', width=10)
+        add_btn.pack(side=tk.LEFT, padx=15)
         
         # 总计区
         total_frame = tk.Frame(edit_window, bg='#ecf0f1')
