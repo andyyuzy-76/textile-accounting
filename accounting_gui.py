@@ -1339,14 +1339,18 @@ class AccountingApp:
             del items[idx]
             refresh_list()
         
-        # 删除按钮
-        del_btn = tk.Button(list_frame, text="🗑️ 删除选中商品", command=delete_item,
-                          font=('微软雅黑', 10), bg='#e74c3c', fg='white')
-        del_btn.pack(pady=5)
+        # 操作按钮区（放在list_frame外面）
+        action_frame = tk.Frame(edit_window)
+        action_frame.pack(fill=tk.X, padx=15, pady=5)
         
-        # 添加商品表单（单独一行）
-        add_form_frame = tk.Frame(list_frame)
-        add_form_frame.pack(fill=tk.X, pady=10)
+        # 删除按钮
+        del_btn = tk.Button(action_frame, text="🗑️ 删除选中商品", command=delete_item,
+                          font=('微软雅黑', 10), bg='#e74c3c', fg='white')
+        del_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 添加商品表单
+        add_form_frame = tk.Frame(action_frame)
+        add_form_frame.pack(side=tk.LEFT, padx=20)
         
         tk.Label(add_form_frame, text="添加商品 - 数量:", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
         add_qty_var = tk.StringVar(value="1")
