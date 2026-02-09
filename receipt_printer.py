@@ -325,16 +325,19 @@ class ReceiptPrinter:
         except Exception as e:
             return {"success": False, "message": f"POS打印失败: {str(e)}"}
     
-    def get_receipt_html(self, record: Dict) -> str:
+    def get_receipt_html(self, record: Dict, paper_width: int = 58) -> str:
         """
         生成小票的HTML格式（用于预览）
         
         参数:
             record: 记录字典
+            paper_width: 纸张宽度（mm），支持58/76/80
         
         返回:
             HTML字符串
         """
+        # 根据纸张宽度设置CSS宽度
+        mm_width = paper_width
         is_return = record.get('type') == 'return' or record.get('quantity', 0) < 0
         receipt_type = "退货单" if is_return else "销售单"
         
@@ -392,7 +395,7 @@ class ReceiptPrinter:
                 }}
                 .receipt {{
                     background: white;
-                    width: 58mm;
+                    width: {mm_width}mm;
                     min-height: 100mm;
                     margin: 0 auto;
                     padding: 10px;
