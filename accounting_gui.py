@@ -1268,7 +1268,7 @@ class AccountingApp:
         # 创建编辑窗口
         edit_window = tk.Toplevel(self.root)
         edit_window.title(f"编辑明细 - 记录#{record_id}")
-        edit_window.geometry("420x500")
+        edit_window.geometry("420x600")
         edit_window.resizable(True, True)
         edit_window.transient(self.root)
         edit_window.grab_set()
