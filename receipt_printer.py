@@ -50,85 +50,63 @@ class ReceiptPrinter:
             return self._format_standard_receipt(record, return_records)
     
     def _format_compact_receipt(self, record: Dict, return_records: list = None) -> str:
-        """紧凑格式小票 - 适合76mm热敏纸一张打印，左对齐充分利用纸张宽度"""
+        """紧凑格式小票 - 适合76mm热敏纸一张打印"""
         lines = []
         # 76mm纸张实际可用宽度约44个字符（中文占2字符）
         width = 44
         
-        # 店铺名称（左对齐，充分利用宽度）
-        lines.append(self.shop_name[:22])  # 增加长度，充分利用76mm宽度
+        # 店铺名称
+        lines.append(self.shop_name[:16])
         
-        # 小票类型 + 单号（一行）
+        # 小票类型 + 单号 + 日期（合并为一行，节省空间）
         is_return = record.get('type') == 'return' or record.get('quantity', 0) < 0
         receipt_type = "退" if is_return else "销"
         record_id = record.get('id', 0)
-        lines.append(f"【{receipt_type}】#{record_id}")
+        date = record.get('date', datetime.now().strftime("%m-%d"))  # 只显示月日
+        lines.append(f"【{receipt_type}】#{record_id} {date}")
         
-        # 日期时间（显示在一行）
-        date = record.get('date', datetime.now().strftime("%Y-%m-%d"))
-        created_at_raw = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
-        # 兼容created_at存储完整日期时间的情况，提取时间部分
-        if ' ' in created_at_raw:
-            created_at = created_at_raw.split(' ')[1]
-        else:
-            created_at = created_at_raw
-        lines.append(f"{date} {created_at}")
+        # 分隔线
+        lines.append("-" * 22)
         
-        # 分隔线（一排，76mm纸张可以用更长）
-        lines.append("-" * 36)
-        
-        # 商品明细 - 76mm纸张可以更宽松
+        # 商品明细
         items = record.get('items', [])
         if not items:
-            # 兼容旧数据格式
             qty = abs(record.get('quantity', 0))
             price = record.get('unit_price', 0)
             subtotal = qty * price
-            lines.append(f"{qty}套 x ¥{price:.0f} = ¥{subtotal:.0f}")
+            lines.append(f"{qty}套x{price:.0f}={subtotal:.0f}")
         else:
             for i, item in enumerate(items, 1):
                 qty = abs(item.get('quantity', 0))
                 price = item.get('unit_price', 0)
                 subtotal = qty * price
-                # 76mm纸张可以更宽松：序号. 数量套 x 单价 = 金额
-                lines.append(f"{i}. {qty}套 x ¥{price:.0f} = ¥{subtotal:.0f}")
+                lines.append(f"{i}.{qty}套x{price:.0f}={subtotal:.0f}")
         
-        # 合计行
+        # 合计
         total_amount = abs(record.get('total_amount', 0))
         total_qty = abs(record.get('quantity', 0))
-        lines.append("-" * 36)
-        lines.append(f"共{total_qty}套 ¥{total_amount:.0f}")
+        lines.append("-" * 22)
+        lines.append(f"合计:{total_qty}套¥{total_amount:.0f}")
         
-        # 如果有退货记录，显示退货明细和净额
+        # 如果有退货，简化显示
         if return_records:
-            lines.append("")
-            lines.append("【退货明细】")
-            return_total = 0
-            return_qty_total = 0
-            for i, ret in enumerate(return_records, 1):
-                ret_qty = abs(ret.get('quantity', 0))
-                ret_amount = abs(ret.get('total_amount', 0))
-                return_qty_total += ret_qty
-                return_total += ret_amount
-                lines.append(f"退{i}. {ret_qty}套 = ¥{ret_amount:.0f}")
-            lines.append("-" * 36)
-            lines.append(f"退货合计:{return_qty_total}套 ¥{return_total:.0f}")
-            # 净额
+            return_total = sum(abs(r.get('total_amount', 0)) for r in return_records)
+            return_qty = sum(abs(r.get('quantity', 0)) for r in return_records)
             net_amount = total_amount - return_total
-            lines.append(f"实付金额:¥{net_amount:.0f}")
+            lines.append(f"退货:{return_qty}套¥{return_total:.0f}")
+            lines.append(f"实付:¥{net_amount:.0f}")
         
-        # 备注（76mm纸张可以更宽）
+        # 备注（简短）
         note = record.get('note', '')
-        if note:
-            note_text = note[:18] + ".." if len(note) > 18 else note
-            lines.append(f"注:{note_text}")
+        if note and len(note) <= 12:
+            lines.append(f"注:{note}")
         
-        # 电话（如果有）
+        # 电话
         if self.shop_phone:
-            lines.append(f"{self.shop_phone}")
+            lines.append(f"TEL:{self.shop_phone}")
         
-        # 底部文字（左对齐，增加长度）
-        footer = self.footer_text[:20] if len(self.footer_text) > 20 else self.footer_text
+        # 底部文字
+        footer = self.footer_text[:14] if len(self.footer_text) > 14 else self.footer_text
         lines.append(footer)
         
         return "\n".join(lines)
