@@ -65,7 +65,12 @@ class ReceiptPrinter:
         
         # 日期时间（显示在一行）
         date = record.get('date', datetime.now().strftime("%Y-%m-%d"))
-        created_at = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
+        created_at_raw = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
+        # 兼容created_at存储完整日期时间的情况，提取时间部分
+        if ' ' in created_at_raw:
+            created_at = created_at_raw.split(' ')[1]
+        else:
+            created_at = created_at_raw
         lines.append(f"{date} {created_at}")
         
         # 分隔线（一排）
@@ -135,7 +140,12 @@ class ReceiptPrinter:
         
         # 日期时间
         date = record.get('date', datetime.now().strftime("%Y-%m-%d"))
-        created_at = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
+        created_at_raw = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
+        # 兼容created_at存储完整日期时间的情况，提取时间部分
+        if ' ' in created_at_raw:
+            created_at = created_at_raw.split(' ')[1]
+        else:
+            created_at = created_at_raw
         lines.append(f"日期: {date} {created_at}")
         lines.append(separator_light)
         
