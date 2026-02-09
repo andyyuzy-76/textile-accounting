@@ -26,7 +26,7 @@ import time
 from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "1.6"
+VERSION = "1.7"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -1310,6 +1310,10 @@ class AccountingApp:
             }]
         record['items'] = items
         
+        # 先创建Label（后面refresh_list会用到）
+        total_qty_label = tk.Label(edit_window, text="总数量: 0套", font=('微软雅黑', 10))
+        total_amount_label = tk.Label(edit_window, text="总金额: ¥0.00", font=('微软雅黑', 10))
+        
         # 填充列表
         def refresh_list():
             items_listbox.delete(0, tk.END)
@@ -1339,69 +1343,150 @@ class AccountingApp:
             del items[idx]
             refresh_list()
         
-        # 操作按钮区（放在list_frame外面）
+        # 操作按钮区（删除+添加）
         action_frame = tk.Frame(edit_window)
-        action_frame.pack(fill=tk.X, padx=15, pady=5)
+        action_frame.pack(fill=tk.X, padx=15, pady=10)
         
-        # 删除按钮
-        del_btn = tk.Button(action_frame, text="🗑️ 删除选中商品", command=delete_item,
-                          font=('微软雅黑', 10), bg='#e74c3c', fg='white')
+        del_btn = tk.Button(action_frame, text="🗑️ 删除选中", command=delete_item,
+                          font=('微软雅黑', 10), bg='#e74c3c', fg='white', width=12)
         del_btn.pack(side=tk.LEFT, padx=5)
         
-        # 添加商品表单
-        add_form_frame = tk.Frame(action_frame)
-        add_form_frame.pack(side=tk.LEFT, padx=20)
+        def show_add_dialog():
+            """弹出添加商品对话框（支持多行）"""
+            dialog = tk.Toplevel(edit_window)
+            dialog.title("添加商品")
+            dialog.geometry("400x400")
+            dialog.transient(edit_window)
+            dialog.grab_set()
+            
+            # 存储所有商品行的数据
+            new_items = []
+            item_rows = []
+            
+            # 商品列表区域
+            list_frame = tk.LabelFrame(dialog, text="待添加商品", font=('微软雅黑', 10))
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            
+            # 表头
+            header_frame = tk.Frame(list_frame)
+            header_frame.pack(fill=tk.X, padx=5, pady=2)
+            tk.Label(header_frame, text="数量", font=('微软雅黑', 9), width=8).pack(side=tk.LEFT)
+            tk.Label(header_frame, text="单价", font=('微软雅黑', 9), width=8).pack(side=tk.LEFT)
+            tk.Label(header_frame, text="小计", font=('微软雅黑', 9), width=10).pack(side=tk.LEFT)
+            
+            # 商品行容器
+            rows_container = tk.Frame(list_frame)
+            rows_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            def add_item_row():
+                """添加一行商品输入"""
+                row_frame = tk.Frame(rows_container)
+                row_frame.pack(fill=tk.X, pady=2)
+                
+                qty_var = tk.StringVar()
+                price_var = tk.StringVar()
+                
+                qty_entry = tk.Entry(row_frame, textvariable=qty_var, font=('微软雅黑', 10), width=8)
+                qty_entry.pack(side=tk.LEFT, padx=2)
+                
+                price_entry = tk.Entry(row_frame, textvariable=price_var, font=('微软雅黑', 10), width=8)
+                price_entry.pack(side=tk.LEFT, padx=2)
+                
+                subtotal_label = tk.Label(row_frame, text="¥0.00", font=('微软雅黑', 10), width=10, anchor='w')
+                subtotal_label.pack(side=tk.LEFT, padx=2)
+                
+                def update_subtotal(*args):
+                    try:
+                        qty = int(qty_var.get() or 0)
+                        price = float(price_var.get() or 0)
+                        subtotal_label.config(text=f"¥{qty * price:.2f}")
+                    except:
+                        subtotal_label.config(text="¥0.00")
+                
+                qty_var.trace_add('write', update_subtotal)
+                price_var.trace_add('write', update_subtotal)
+                
+                def delete_row():
+                    if len(item_rows) > 1:
+                        row_frame.destroy()
+                        item_rows.remove(row_data)
+                
+                del_btn = tk.Button(row_frame, text="🗑", command=delete_row, 
+                                   font=('微软雅黑', 8), bg='#e74c3c', fg='white', width=2)
+                del_btn.pack(side=tk.LEFT, padx=2)
+                
+                row_data = {
+                    'qty_var': qty_var,
+                    'price_var': price_var,
+                    'frame': row_frame
+                }
+                item_rows.append(row_data)
+                
+                # 回车跳转
+                qty_entry.bind('<Return>', lambda e: price_entry.focus())
+                price_entry.bind('<Return>', lambda e: add_item_row())
+                
+                qty_entry.focus_set()
+                return row_data
+            
+            # 添加第一行
+            add_item_row()
+            
+            # 添加商品行按钮
+            add_row_btn = tk.Button(dialog, text="➕ 添加商品行", command=add_item_row,
+                                   font=('微软雅黑', 10), bg='#3498db', fg='white')
+            add_row_btn.pack(pady=5)
+            
+            def do_add():
+                """确认添加所有商品"""
+                try:
+                    added_count = 0
+                    for row in item_rows:
+                        qty_str = row['qty_var'].get().strip()
+                        price_str = row['price_var'].get().strip()
+                        
+                        if qty_str and price_str:
+                            qty = int(qty_str)
+                            price = float(price_str)
+                            if qty > 0 and price > 0:
+                                items.append({'quantity': qty, 'unit_price': price})
+                                added_count += 1
+                    
+                    if added_count > 0:
+                        refresh_list()
+                        dialog.destroy()
+                        messagebox.showinfo("成功", f"已添加 {added_count} 个商品")
+                    else:
+                        messagebox.showwarning("提示", "请至少填写一个有效的商品")
+                except ValueError:
+                    messagebox.showerror("错误", "请输入有效的数字")
+            
+            # 按钮区
+            btn_frame = tk.Frame(dialog)
+            btn_frame.pack(pady=10)
+            
+            tk.Button(btn_frame, text="✅ 确认添加", command=do_add,
+                     font=('微软雅黑', 11), bg='#27ae60', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+            tk.Button(btn_frame, text="❌ 取消", command=dialog.destroy,
+                     font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+            
+            # 快捷键：Ctrl+Enter 确认添加
+            dialog.bind('<Control-Return>', lambda e: do_add())
         
-        tk.Label(add_form_frame, text="添加商品 - 数量:", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
-        add_qty_var = tk.StringVar(value="1")
-        add_qty_entry = tk.Entry(add_form_frame, textvariable=add_qty_var, font=('微软雅黑', 10), width=8)
-        add_qty_entry.pack(side=tk.LEFT, padx=5)
-        
-        tk.Label(add_form_frame, text="单价:", font=('微软雅黑', 10)).pack(side=tk.LEFT, padx=5)
-        add_price_var = tk.StringVar(value="")
-        add_price_entry = tk.Entry(add_form_frame, textvariable=add_price_var, font=('微软雅黑', 10), width=8)
-        add_price_entry.pack(side=tk.LEFT, padx=5)
-        
-        def add_item():
-            """添加新商品"""
-            try:
-                qty = int(add_qty_var.get())
-                price = float(add_price_var.get())
-                
-                if qty <= 0 or price <= 0:
-                    messagebox.showerror("错误", "数量和单价必须大于0")
-                    return
-                
-                items.append({
-                    'quantity': qty,
-                    'unit_price': price
-                })
-                
-                refresh_list()
-                
-                # 清空输入框
-                add_qty_var.set("1")
-                add_price_var.set("")
-                add_qty_entry.focus_set()
-                
-            except ValueError:
-                messagebox.showerror("错误", "请输入有效的数字")
-        
-        add_btn = tk.Button(add_form_frame, text="➕ 添加", command=add_item,
-                          font=('微软雅黑', 10), bg='#3498db', fg='white', width=10)
-        add_btn.pack(side=tk.LEFT, padx=15)
+        add_btn = tk.Button(action_frame, text="➕ 添加商品", command=show_add_dialog,
+                          font=('微软雅黑', 10), bg='#3498db', fg='white', width=12)
+        add_btn.pack(side=tk.LEFT, padx=20)
         
         # 总计区
         total_frame = tk.Frame(edit_window, bg='#ecf0f1')
         total_frame.pack(fill=tk.X, padx=15, pady=10)
         
-        total_qty_label = tk.Label(total_frame, text=f"总数量: {current_total_qty}套", 
-                                  font=('微软雅黑', 11, 'bold'), bg='#ecf0f1')
-        total_qty_label.pack(side=tk.LEFT, padx=20)
+        # 把Label放到总计区（不再重新定义变量）
+        total_qty_label.config(font=('微软雅黑', 11, 'bold'), bg='#ecf0f1')
+        total_qty_label.pack(in_=total_frame, side=tk.LEFT, padx=20)
         
-        total_amount_label = tk.Label(total_frame, text=f"总金额: ¥{current_total_amount:.2f}", 
-                                     font=('微软雅黑', 11, 'bold'), bg='#ecf0f1', fg='#e74c3c')
-        total_amount_label.pack(side=tk.RIGHT, padx=20)
+        total_amount_label.config(font=('微软雅黑', 11, 'bold'), bg='#ecf0f1', fg='#e74c3c')
+        total_amount_label.pack(in_=total_frame, side=tk.RIGHT, padx=20)
         
         # 按钮区
         btn_frame = tk.Frame(edit_window)
@@ -1442,8 +1527,6 @@ class AccountingApp:
                   font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=10).pack(side=tk.LEFT, padx=10)
         
         # 快捷键
-        add_qty_entry.bind('<Return>', lambda e: add_price_entry.focus())
-        add_price_entry.bind('<Return>', lambda e: add_item())
         edit_window.bind('<Control-Return>', lambda e: save_changes())
     
     def convert_to_return(self):
