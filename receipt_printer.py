@@ -63,11 +63,12 @@ class ReceiptPrinter:
         record_id = record.get('id', 0)
         lines.append(f"【{receipt_type}】#{record_id}")
         
-        # 日期时间（只显示一次）
+        # 日期时间（显示在一行）
         date = record.get('date', datetime.now().strftime("%Y-%m-%d"))
-        lines.append(f"{date}")
+        created_at = record.get('created_at', datetime.now().strftime("%H:%M:%S"))
+        lines.append(f"{date} {created_at}")
         
-        # 简化的分隔线
+        # 分隔线（一排）
         lines.append("-" * 16)
         
         # 商品明细 - 超紧凑格式
