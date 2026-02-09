@@ -55,8 +55,8 @@ class ReceiptPrinter:
         # 76mm纸张实际可用宽度约44个字符（中文占2字符）
         width = 44
         
-        # 店铺名称（左对齐，不居中）
-        lines.append(self.shop_name[:16])  # 限制长度
+        # 店铺名称（左对齐，充分利用宽度）
+        lines.append(self.shop_name[:22])  # 增加长度，充分利用76mm宽度
         
         # 小票类型 + 单号（一行）
         is_return = record.get('type') == 'return' or record.get('quantity', 0) < 0
@@ -74,29 +74,29 @@ class ReceiptPrinter:
             created_at = created_at_raw
         lines.append(f"{date} {created_at}")
         
-        # 分隔线（一排）
-        lines.append("-" * 22)
+        # 分隔线（一排，76mm纸张可以用更长）
+        lines.append("-" * 36)
         
-        # 商品明细 - 超紧凑格式
+        # 商品明细 - 76mm纸张可以更宽松
         items = record.get('items', [])
         if not items:
             # 兼容旧数据格式
             qty = abs(record.get('quantity', 0))
             price = record.get('unit_price', 0)
             subtotal = qty * price
-            lines.append(f"{qty}套 @ ¥{price:.0f} = ¥{subtotal:.0f}")
+            lines.append(f"{qty}套 x ¥{price:.0f} = ¥{subtotal:.0f}")
         else:
             for i, item in enumerate(items, 1):
                 qty = abs(item.get('quantity', 0))
                 price = item.get('unit_price', 0)
                 subtotal = qty * price
-                # 76mm纸张可以更宽松：序号.数量套@单价=金额
-                lines.append(f"{i}.{qty}套@¥{price:.0f}=¥{subtotal:.0f}")
+                # 76mm纸张可以更宽松：序号. 数量套 x 单价 = 金额
+                lines.append(f"{i}. {qty}套 x ¥{price:.0f} = ¥{subtotal:.0f}")
         
         # 合计行
         total_amount = abs(record.get('total_amount', 0))
         total_qty = abs(record.get('quantity', 0))
-        lines.append("-" * 22)
+        lines.append("-" * 36)
         lines.append(f"共{total_qty}套 ¥{total_amount:.0f}")
         
         # 如果有退货记录，显示退货明细和净额
@@ -110,25 +110,25 @@ class ReceiptPrinter:
                 ret_amount = abs(ret.get('total_amount', 0))
                 return_qty_total += ret_qty
                 return_total += ret_amount
-                lines.append(f"退{i}.{ret_qty}套=¥{ret_amount:.0f}")
-            lines.append("-" * 22)
+                lines.append(f"退{i}. {ret_qty}套 = ¥{ret_amount:.0f}")
+            lines.append("-" * 36)
             lines.append(f"退货合计:{return_qty_total}套 ¥{return_total:.0f}")
             # 净额
             net_amount = total_amount - return_total
             lines.append(f"实付金额:¥{net_amount:.0f}")
         
-        # 备注（超短）
+        # 备注（76mm纸张可以更宽）
         note = record.get('note', '')
         if note:
-            note_text = note[:10] + ".." if len(note) > 10 else note
+            note_text = note[:18] + ".." if len(note) > 18 else note
             lines.append(f"注:{note_text}")
         
         # 电话（如果有）
         if self.shop_phone:
             lines.append(f"{self.shop_phone}")
         
-        # 底部文字（左对齐）
-        footer = self.footer_text[:12] if len(self.footer_text) > 12 else self.footer_text
+        # 底部文字（左对齐，增加长度）
+        footer = self.footer_text[:20] if len(self.footer_text) > 20 else self.footer_text
         lines.append(footer)
         
         return "\n".join(lines)
