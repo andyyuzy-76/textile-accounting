@@ -2410,13 +2410,16 @@ class AccountingApp:
     # ==================== 小票打印相关方法 ====================
 
     def print_receipt(self, record):
-        """打印小票"""
+        """打印小票（包含关联的退货记录）"""
         try:
             # 获取紧凑模式设置（默认True）
             compact_mode = self.printer_settings.get('compact_mode', True)
             
-            # 生成小票文本
-            receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode)
+            # 查找关联的退货记录
+            return_records = self.get_return_records(record)
+            
+            # 生成小票文本（包含退货记录）
+            receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode, return_records=return_records)
 
             # 获取用户选择的打印机
             printer_name = self.printer_settings.get('printer_name', '')
@@ -2433,8 +2436,21 @@ class AccountingApp:
         except Exception as e:
             messagebox.showerror("打印错误", f"打印失败: {str(e)}")
 
+    def get_return_records(self, record):
+        """获取关联的退货记录"""
+        return_records = []
+        is_return = record.get('type') == 'return' or record.get('quantity', 0) < 0
+        if not is_return:
+            # 是销售记录，查找关联的退货
+            record_id = record.get('id')
+            for r in self.records:
+                if r.get('type') == 'return' or r.get('quantity', 0) < 0:
+                    if r.get('original_record_id') == record_id:
+                        return_records.append(r)
+        return return_records
+    
     def save_receipt_as_text(self, record):
-        """保存小票为文本文件"""
+        """保存小票为文本文件（包含退货记录）"""
         file_path = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
@@ -2445,7 +2461,9 @@ class AccountingApp:
             try:
                 # 获取紧凑模式设置（默认True）
                 compact_mode = self.printer_settings.get('compact_mode', True)
-                receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode)
+                # 查找关联的退货记录
+                return_records = self.get_return_records(record)
+                receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode, return_records=return_records)
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(receipt_text)
                 messagebox.showinfo("保存成功", f"小票已保存到:\n{file_path}")
@@ -2453,7 +2471,7 @@ class AccountingApp:
                 messagebox.showerror("保存失败", f"保存失败: {str(e)}")
 
     def show_receipt_preview(self, record):
-        """显示小票预览"""
+        """显示小票预览（包含退货记录）"""
         preview_window = tk.Toplevel(self.root)
         preview_window.title("小票预览")
         preview_window.geometry("450x650")
@@ -2475,7 +2493,9 @@ class AccountingApp:
 
         # 获取紧凑模式设置（默认True）
         compact_mode = self.printer_settings.get('compact_mode', True)
-        receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode)
+        # 查找关联的退货记录
+        return_records = self.get_return_records(record)
+        receipt_text = self.receipt_printer.format_receipt(record, compact=compact_mode, return_records=return_records)
 
         text_widget = tk.Text(
             text_frame,
