@@ -26,7 +26,7 @@ import time
 from receipt_printer import ReceiptPrinter, get_printer_list
 
 # 版本信息
-VERSION = "0.7"
+VERSION = "1.3"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
