@@ -25,17 +25,53 @@ import time
 # 导入打印模块
 from receipt_printer import ReceiptPrinter, get_printer_list
 
+# 导入自动更新模块
+try:
+    from auto_updater import check_for_updates, perform_update, get_current_version
+except ImportError:
+    def check_for_updates(silent=True):
+        return False, None, "1.12.0", ""
+    def perform_update(callback=None):
+        return False, "更新模块未安装"
+    def get_current_version():
+        return "1.12.0"
+
 # 版本信息
-VERSION = "1.11"
+VERSION = "1.12.0"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 class AccountingApp:
+    # 深蓝色系配色方案
+    COLORS = {
+        'primary': '#1E3A5F',       # 深蓝主色
+        'primary_light': '#2C5282', # 浅蓝
+        'primary_dark': '#1A365D',  # 更深蓝
+        'secondary': '#4A5568',     # 次要色
+        'success': '#276749',       # 深绿
+        'warning': '#C05621',       # 深橙
+        'danger': '#C53030',        # 深红
+        'dark': '#1A202C',          # 深色文字
+        'gray': '#4A5568',          # 灰色文字
+        'light': '#EDF2F7',         # 浅灰背景
+        'white': '#FFFFFF',         # 白色
+        'card_bg': '#FFFFFF',       # 卡片背景
+        'border': '#CBD5E0',        # 边框色
+        'divider': '#A0AEC0',       # 分割线
+        'text': '#2D3748',          # 主文字
+        'text_light': '#718096',    # 次要文字
+        'text_hint': '#A0AEC0',     # 提示文字
+        'header_bg': '#1E3A5F',     # 标题背景-深蓝
+        'hover_bg': '#EBF8FF',      # 悬停背景
+        'selected_bg': '#BEE3F8',   # 选中背景
+        'input_bg': '#F7FAFC',      # 输入框背景
+    }
+    
     def __init__(self, root):
         self.root = root
         self.root.title(f"🏠 家纺四件套记账系统 v{VERSION}")
-        self.root.geometry("900x700")
-        self.root.configure(bg='#f0f0f0')
+        self.root.geometry("1100x750")
+        self.root.configure(bg=self.COLORS['light'])
         self.root.state('zoomed')  # 窗口最大化
         
         # 数据文件路径
@@ -53,6 +89,9 @@ class AccountingApp:
         # 初始化打印机
         self.receipt_printer = ReceiptPrinter()
         self.load_printer_settings()
+        
+        # 配置ttk样式
+        self.setup_styles()
 
         # 创建界面
         self.create_widgets()
@@ -63,6 +102,33 @@ class AccountingApp:
         # 绑定快捷键（F5刷新，Ctrl+Enter添加记录）
         self.root.bind('<F5>', lambda e: self.refresh_display())
         self.root.bind('<Control-Return>', lambda e: self.add_record())
+    
+    def setup_styles(self):
+        """配置ttk样式 - 深蓝色风格"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Treeview样式 - 深蓝色表头
+        style.configure('Custom.Treeview',
+                       background=self.COLORS['white'],
+                       foreground=self.COLORS['text'],
+                       fieldbackground=self.COLORS['white'],
+                       borderwidth=0,
+                       rowheight=28,
+                       font=('微软雅黑', 10))
+        style.configure('Custom.Treeview.Heading',
+                       font=('微软雅黑', 10, 'bold'),
+                       background=self.COLORS['primary'],
+                       foreground=self.COLORS['white'])
+        style.map('Custom.Treeview',
+                 background=[('selected', self.COLORS['selected_bg'])],
+                 foreground=[('selected', self.COLORS['primary'])])
+        
+        # Combobox样式
+        style.configure('Custom.TCombobox',
+                       fieldbackground=self.COLORS['white'],
+                       background=self.COLORS['white'],
+                       borderwidth=1)
     
     def load_records(self) -> List[Dict]:
         """加载历史记录"""
@@ -124,245 +190,364 @@ class AccountingApp:
     
     def create_widgets(self):
         """创建界面组件"""
-        # 标题
-        title_frame = tk.Frame(self.root, bg='#2c3e50', height=60)
+        # ===== 标题栏 - 深蓝色 =====
+        title_frame = tk.Frame(self.root, bg=self.COLORS['primary'], height=56)
         title_frame.pack(fill=tk.X)
         title_frame.pack_propagate(False)
         
+        # 标题文字
         title_label = tk.Label(
             title_frame, 
-            text="🏠 家纺四件套记账系统", 
-            font=('微软雅黑', 20, 'bold'),
-            bg='#2c3e50',
-            fg='white'
+            text="🏠 家纺记账", 
+            font=('微软雅黑', 18, 'bold'),
+            bg=self.COLORS['primary'],
+            fg=self.COLORS['white']
         )
-        title_label.pack(pady=10)
+        title_label.pack(pady=12)
         
-        # 主内容区
-        main_frame = tk.Frame(self.root, bg='#f0f0f0')
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        # 版本标签
+        version_label = tk.Label(
+            title_frame,
+            text=f"v{VERSION}",
+            font=('微软雅黑', 9),
+            bg=self.COLORS['primary'],
+            fg='#A0C4E8'
+        )
+        version_label.place(relx=0.96, rely=0.5, anchor='e')
         
-        # 左侧录入区
-        left_frame = tk.LabelFrame(
-            main_frame, 
-            text="📝 录入新记录", 
+        # 分割线
+        tk.Frame(self.root, bg=self.COLORS['divider'], height=1).pack(fill=tk.X)
+        
+        # ===== 主内容区 =====
+        main_frame = tk.Frame(self.root, bg=self.COLORS['light'])
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        
+        # ===== 左侧录入区 =====
+        left_frame = tk.Frame(main_frame, bg=self.COLORS['card_bg'], 
+                             highlightbackground=self.COLORS['border'], 
+                             highlightthickness=1)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        
+        # 录入区标题
+        header_frame = tk.Frame(left_frame, bg=self.COLORS['primary_light'], height=40)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+        
+        tk.Label(
+            header_frame, 
+            text="📝 新记录", 
             font=('微软雅黑', 12, 'bold'),
-            bg='#f0f0f0',
-            fg='#2c3e50'
-        )
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+            bg=self.COLORS['primary_light'],
+            fg=self.COLORS['white']
+        ).pack(pady=8, padx=12, anchor='w')
         
-        # 录入表单
-        form_frame = tk.Frame(left_frame, bg='#f0f0f0')
-        form_frame.pack(fill=tk.X, padx=15, pady=10)
+        # 录入表单容器
+        form_frame = tk.Frame(left_frame, bg=self.COLORS['card_bg'])
+        form_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         
-        # 日期
-        tk.Label(form_frame, text="📅 日期:", font=('微软雅黑', 11), bg='#f0f0f0').grid(row=0, column=0, sticky='w', pady=5)
+        # ===== 日期行 =====
+        tk.Label(form_frame, text="日期", font=('微软雅黑', 11), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['dark']).pack(anchor='w', pady=(0, 4))
+        
+        date_row = tk.Frame(form_frame, bg=self.COLORS['card_bg'])
+        date_row.pack(fill=tk.X, pady=(0, 8))
+        
         self.date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
-        date_entry = tk.Entry(form_frame, textvariable=self.date_var, font=('微软雅黑', 11), width=15)
-        date_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
-        tk.Button(form_frame, text="今天", command=self.set_today, font=('微软雅黑', 9)).grid(row=0, column=2, padx=5)
+        date_entry = tk.Entry(date_row, textvariable=self.date_var, 
+                             font=('微软雅黑', 11), width=16,
+                             bg=self.COLORS['white'], fg=self.COLORS['dark'],
+                             relief='solid', borderwidth=1,
+                             highlightthickness=0)
+        date_entry.pack(side=tk.LEFT, ipady=5)
         
-        # 记录类型（销售/退货）
-        tk.Label(form_frame, text="📋 类型:", font=('微软雅黑', 11), bg='#f0f0f0').grid(row=1, column=0, sticky='w', pady=5)
+        today_btn = tk.Button(date_row, text="今天", command=self.set_today, 
+                             font=('微软雅黑', 10), bg=self.COLORS['light'],
+                             fg=self.COLORS['primary'], relief='flat',
+                             cursor='hand2', borderwidth=0)
+        today_btn.pack(side=tk.LEFT, padx=8)
+        
+        # ===== 记录类型 =====
+        tk.Label(form_frame, text="类型", font=('微软雅黑', 11), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['dark']).pack(anchor='w', pady=(8, 4))
+        
+        type_frame = tk.Frame(form_frame, bg=self.COLORS['card_bg'])
+        type_frame.pack(fill=tk.X, pady=(0, 8))
+        
         self.record_type_var = tk.StringVar(value="sale")
-        type_frame = tk.Frame(form_frame, bg='#f0f0f0')
-        type_frame.grid(row=1, column=1, sticky='w', pady=5, padx=5)
-        tk.Radiobutton(type_frame, text="✅ 销售", variable=self.record_type_var, value="sale", 
-                      font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT, padx=5)
-        tk.Radiobutton(type_frame, text="🔄 退货", variable=self.record_type_var, value="return",
-                      font=('微软雅黑', 10), bg='#f0f0f0', fg='#e74c3c').pack(side=tk.LEFT, padx=5)
         
-        # 商品明细区域
-        items_frame = tk.LabelFrame(form_frame, text="📦 商品明细", font=('微软雅黑', 10, 'bold'), bg='#f0f0f0')
-        items_frame.grid(row=2, column=0, columnspan=3, sticky='ew', pady=10)
+        # 销售单选按钮
+        sale_rb = tk.Radiobutton(type_frame, text="销售", variable=self.record_type_var, 
+                                value="sale", font=('微软雅黑', 10), 
+                                bg=self.COLORS['card_bg'], fg=self.COLORS['dark'],
+                                selectcolor=self.COLORS['light'], 
+                                activebackground=self.COLORS['card_bg'],
+                                activeforeground=self.COLORS['success'])
+        sale_rb.pack(side=tk.LEFT, padx=(0, 16))
+        
+        # 退货单选按钮
+        return_rb = tk.Radiobutton(type_frame, text="退货", variable=self.record_type_var,
+                                  value="return", font=('微软雅黑', 10), 
+                                  bg=self.COLORS['card_bg'], fg=self.COLORS['dark'],
+                                  selectcolor=self.COLORS['light'],
+                                  activebackground=self.COLORS['card_bg'],
+                                  activeforeground=self.COLORS['danger'])
+        return_rb.pack(side=tk.LEFT)
+        
+        # ===== 商品明细区域 =====
+        tk.Label(form_frame, text="商品明细", font=('微软雅黑', 11), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['dark']).pack(anchor='w', pady=(8, 4))
+        
+        # 商品表格容器
+        items_container_frame = tk.Frame(form_frame, bg=self.COLORS['white'],
+                                        relief='solid', borderwidth=1)
+        items_container_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         
         # 商品表格头部
-        header_frame = tk.Frame(items_frame, bg='#ecf0f1')
-        header_frame.pack(fill=tk.X, padx=5, pady=2)
-        tk.Label(header_frame, text="数量", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=8).pack(side=tk.LEFT, padx=2)
-        tk.Label(header_frame, text="单价", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=8).pack(side=tk.LEFT, padx=2)
-        tk.Label(header_frame, text="小计", font=('微软雅黑', 9, 'bold'), bg='#ecf0f1', width=10).pack(side=tk.LEFT, padx=2)
-        tk.Label(header_frame, text="", bg='#ecf0f1', width=3).pack(side=tk.LEFT, padx=2)
+        header_row = tk.Frame(items_container_frame, bg=self.COLORS['light'])
+        header_row.pack(fill=tk.X, padx=8, pady=6)
+        
+        tk.Label(header_row, text="数量", font=('微软雅黑', 10), 
+                bg=self.COLORS['light'], fg=self.COLORS['gray'],
+                width=10, anchor='center').pack(side=tk.LEFT, padx=2)
+        tk.Label(header_row, text="单价", font=('微软雅黑', 10), 
+                bg=self.COLORS['light'], fg=self.COLORS['gray'],
+                width=10, anchor='center').pack(side=tk.LEFT, padx=2)
+        tk.Label(header_row, text="小计", font=('微软雅黑', 10), 
+                bg=self.COLORS['light'], fg=self.COLORS['gray'],
+                width=12, anchor='center').pack(side=tk.LEFT, padx=2)
+        tk.Label(header_row, text="", bg=self.COLORS['light'], width=3).pack(side=tk.LEFT)
         
         # 商品行容器（可滚动）
-        self.items_container = tk.Frame(items_frame, bg='#f0f0f0')
-        self.items_container.pack(fill=tk.X, padx=5, pady=2)
+        self.items_container = tk.Frame(items_container_frame, bg=self.COLORS['white'])
+        self.items_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=2)
         
         # 存储商品行数据
-        self.item_rows = []  # 每行: {'qty_var': StringVar, 'price_var': StringVar, 'subtotal_label': Label, 'frame': Frame}
+        self.item_rows = []
         
         # 添加第一行
         self.add_item_row()
         
         # 添加商品行按钮
-        add_row_btn = tk.Button(items_frame, text="➕ 添加商品行", command=self.add_item_row,
-                                font=('微软雅黑', 9), bg='#3498db', fg='white')
-        add_row_btn.pack(pady=5)
+        add_row_btn = tk.Button(items_container_frame, text="+ 添加商品", 
+                               command=self.add_item_row,
+                               font=('微软雅黑', 10), bg=self.COLORS['white'],
+                               fg=self.COLORS['primary'], relief='flat',
+                               cursor='hand2', borderwidth=0,
+                               activebackground=self.COLORS['light'])
+        add_row_btn.pack(pady=6)
         
-        # 汇总区域
-        summary_frame = tk.Frame(form_frame, bg='#f0f0f0')
-        summary_frame.grid(row=3, column=0, columnspan=3, sticky='ew', pady=5)
+        # ===== 汇总区域 =====
+        summary_frame = tk.Frame(form_frame, bg=self.COLORS['light'])
+        summary_frame.pack(fill=tk.X, pady=8, ipady=6)
         
-        tk.Label(summary_frame, text="📊 汇总:", font=('微软雅黑', 11, 'bold'), bg='#f0f0f0').pack(side=tk.LEFT)
+        tk.Label(summary_frame, text="汇总", font=('微软雅黑', 11), 
+                bg=self.COLORS['light'], fg=self.COLORS['dark']).pack(side=tk.LEFT, padx=10)
+        
         self.summary_qty_var = tk.StringVar(value="0套")
-        tk.Label(summary_frame, textvariable=self.summary_qty_var, font=('微软雅黑', 11), bg='#f0f0f0', fg='#2c3e50').pack(side=tk.LEFT, padx=10)
-        self.summary_total_var = tk.StringVar(value="¥0.00")
-        tk.Label(summary_frame, textvariable=self.summary_total_var, font=('微软雅黑', 11, 'bold'), bg='#f0f0f0', fg='#e74c3c').pack(side=tk.LEFT, padx=10)
+        tk.Label(summary_frame, textvariable=self.summary_qty_var, 
+                font=('微软雅黑', 11), bg=self.COLORS['light'],
+                fg=self.COLORS['dark']).pack(side=tk.LEFT, padx=10)
         
-        # 备注
-        note_frame = tk.Frame(form_frame, bg='#f0f0f0')
-        note_frame.grid(row=4, column=0, columnspan=3, sticky='ew', pady=5)
-        tk.Label(note_frame, text="📝 备注(客户名等):", font=('微软雅黑', 10), bg='#f0f0f0').pack(anchor='w')
-        self.note_text = tk.Text(note_frame, font=('微软雅黑', 10), width=30, height=2)
-        self.note_text.pack(fill=tk.X, pady=2)
+        self.summary_total_var = tk.StringVar(value="¥0.00")
+        tk.Label(summary_frame, textvariable=self.summary_total_var, 
+                font=('微软雅黑', 13, 'bold'), bg=self.COLORS['light'],
+                fg=self.COLORS['primary']).pack(side=tk.LEFT, padx=10)
+        
+        # ===== 备注区域 =====
+        tk.Label(form_frame, text="备注", font=('微软雅黑', 11), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['dark']).pack(anchor='w', pady=(8, 4))
+        
+        self.note_text = tk.Text(form_frame, font=('微软雅黑', 10), 
+                                width=30, height=2,
+                                bg=self.COLORS['white'], fg=self.COLORS['dark'],
+                                relief='solid', borderwidth=1,
+                                highlightthickness=0)
+        self.note_text.pack(fill=tk.X, ipady=4)
         self.note_text.bind('<Return>', self.on_note_return)
         
-        # 添加按钮
-        btn_frame = tk.Frame(left_frame, bg='#f0f0f0')
-        btn_frame.pack(fill=tk.X, padx=15, pady=10)
+        # ===== 操作按钮区 =====
+        btn_frame = tk.Frame(left_frame, bg=self.COLORS['card_bg'])
+        btn_frame.pack(fill=tk.X, padx=12, pady=12)
         
+        # 添加记录按钮
         add_btn = tk.Button(
             btn_frame,
-            text="✅ 添加记录 (Ctrl+Enter)",
+            text="✅ 添加记录",
             command=self.add_record,
-            font=('微软雅黑', 12, 'bold'),
-            bg='#27ae60',
-            fg='white',
-            height=2
+            font=('微软雅黑', 11, 'bold'),
+            bg=self.COLORS['primary'],
+            fg=self.COLORS['white'],
+            height=2,
+            relief='flat',
+            cursor='hand2',
+            borderwidth=0
         )
-        add_btn.pack(fill=tk.X, pady=5)
+        add_btn.pack(fill=tk.X, pady=4)
 
         # 快捷提示
         tip_label = tk.Label(
             btn_frame,
-            text="💡 回车跳转下一项，Ctrl+Enter提交",
+            text="Ctrl+Enter 快速提交",
             font=('微软雅黑', 9),
-            bg='#f0f0f0',
-            fg='#7f8c8d'
+            bg=self.COLORS['card_bg'],
+            fg=self.COLORS['text_light']
         )
-        tip_label.pack(pady=2)
+        tip_label.pack(pady=4)
         
+        # 清空按钮
         clear_btn = tk.Button(
             btn_frame, 
-            text="🔄 清空表单", 
+            text="清空表单", 
             command=self.clear_form,
             font=('微软雅黑', 10),
-            bg='#95a5a6',
-            fg='white'
+            bg=self.COLORS['light'],
+            fg=self.COLORS['text'],
+            relief='flat',
+            cursor='hand2',
+            borderwidth=0
         )
-        clear_btn.pack(fill=tk.X, pady=5)
+        clear_btn.pack(fill=tk.X, pady=4)
         
-        # 今日统计
-        stats_frame = tk.LabelFrame(
-            left_frame, 
-            text="📊 今日统计", 
-            font=('微软雅黑', 11, 'bold'),
-            bg='#f0f0f0',
-            fg='#2c3e50'
-        )
-        stats_frame.pack(fill=tk.X, padx=15, pady=10)
+        # ===== 今日统计卡片 =====
+        stats_card = tk.Frame(left_frame, bg=self.COLORS['light'])
+        stats_card.pack(fill=tk.X, padx=12, pady=(4, 12))
+        
+        stats_header = tk.Frame(stats_card, bg=self.COLORS['primary_light'], height=32)
+        stats_header.pack(fill=tk.X)
+        stats_header.pack_propagate(False)
+        
+        tk.Label(stats_header, text="📊 今日统计", font=('微软雅黑', 10, 'bold'),
+                bg=self.COLORS['primary_light'], fg=self.COLORS['white']).pack(pady=5)
         
         self.stats_label = tk.Label(
-            stats_frame, 
+            stats_card, 
             text="加载中...", 
             font=('微软雅黑', 10),
-            bg='#f0f0f0',
+            bg=self.COLORS['light'],
+            fg=self.COLORS['text'],
             justify=tk.LEFT
         )
         self.stats_label.pack(padx=10, pady=10)
         
-        # 右侧记录列表
-        right_frame = tk.LabelFrame(
-            main_frame, 
-            text="📋 记录列表", 
-            font=('微软雅黑', 12, 'bold'),
-            bg='#f0f0f0',
-            fg='#2c3e50'
-        )
+        # ===== 右侧记录列表 =====
+        right_frame = tk.Frame(main_frame, bg=self.COLORS['card_bg'],
+                              highlightbackground=self.COLORS['border'],
+                              highlightthickness=1)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
-        # 筛选区
-        filter_frame = tk.Frame(right_frame, bg='#f0f0f0')
-        filter_frame.pack(fill=tk.X, padx=10, pady=10)
+        # 记录列表标题
+        list_header = tk.Frame(right_frame, bg=self.COLORS['primary_light'], height=40)
+        list_header.pack(fill=tk.X)
+        list_header.pack_propagate(False)
+        
+        tk.Label(list_header, text="📋 记录列表", font=('微软雅黑', 12, 'bold'),
+                bg=self.COLORS['primary_light'], fg=self.COLORS['white']).pack(side=tk.LEFT, pady=8, padx=12)
+        
+        # ===== 筛选区 =====
+        filter_frame = tk.Frame(right_frame, bg=self.COLORS['card_bg'])
+        filter_frame.pack(fill=tk.X, padx=10, pady=8)
 
         # 显示状态标签
-        self.status_label = tk.Label(filter_frame, text="实时销售", font=('微软雅黑', 10, 'bold'), bg='#f0f0f0', fg='#27ae60')
-        self.status_label.pack(side=tk.LEFT, padx=5)
+        self.status_label = tk.Label(filter_frame, text="今日", 
+                                    font=('微软雅黑', 10, 'bold'), 
+                                    bg=self.COLORS['card_bg'], fg=self.COLORS['primary'])
+        self.status_label.pack(side=tk.LEFT, padx=4)
 
-        tk.Label(filter_frame, text="|", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+        tk.Label(filter_frame, text="|", font=('微软雅黑', 10), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['divider']).pack(side=tk.LEFT, padx=6)
 
         # 日期选择器
-        tk.Label(filter_frame, text="日期:", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+        tk.Label(filter_frame, text="日期", font=('微软雅黑', 10), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['gray']).pack(side=tk.LEFT, padx=(2, 4))
 
         # 年份选择
         self.filter_year_var = tk.StringVar(value=str(datetime.now().year))
         year_values = [str(y) for y in range(2020, 2031)]
-        year_combo = ttk.Combobox(filter_frame, textvariable=self.filter_year_var, values=year_values,
-                                   width=5, font=('微软雅黑', 10), state='readonly')
-        year_combo.pack(side=tk.LEFT, padx=2)
-        tk.Label(filter_frame, text="年", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+        year_combo = ttk.Combobox(filter_frame, textvariable=self.filter_year_var, 
+                                  values=year_values, width=6, 
+                                  font=('微软雅黑', 10), state='readonly')
+        year_combo.pack(side=tk.LEFT, padx=1)
+        tk.Label(filter_frame, text="-", font=('微软雅黑', 10), 
+                bg=self.COLORS['card_bg'], fg=self.COLORS['gray']).pack(side=tk.LEFT)
 
         # 月份选择
         self.filter_month_var = tk.StringVar(value=str(datetime.now().month).zfill(2))
         month_values = [str(m).zfill(2) for m in range(1, 13)]
-        month_combo = ttk.Combobox(filter_frame, textvariable=self.filter_month_var, values=month_values,
-                                    width=3, font=('微软雅黑', 10), state='readonly')
-        month_combo.pack(side=tk.LEFT, padx=2)
-        tk.Label(filter_frame, text="月", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+        month_combo = ttk.Combobox(filter_frame, textvariable=self.filter_month_var,
+                                   values=month_values, width=3,
+                                   font=('微软雅黑', 10), state='readonly')
+        month_combo.pack(side=tk.LEFT, padx=1)
+        tk.Label(filter_frame, text="-", font=('微软雅黑', 10),
+                bg=self.COLORS['card_bg'], fg=self.COLORS['gray']).pack(side=tk.LEFT)
 
         # 日期选择
         self.filter_day_var = tk.StringVar(value=str(datetime.now().day).zfill(2))
         day_values = [str(d).zfill(2) for d in range(1, 32)]
-        day_combo = ttk.Combobox(filter_frame, textvariable=self.filter_day_var, values=day_values,
-                                  width=3, font=('微软雅黑', 10), state='readonly')
-        day_combo.pack(side=tk.LEFT, padx=2)
-        tk.Label(filter_frame, text="日", font=('微软雅黑', 10), bg='#f0f0f0').pack(side=tk.LEFT)
+        day_combo = ttk.Combobox(filter_frame, textvariable=self.filter_day_var,
+                                 values=day_values, width=3,
+                                 font=('微软雅黑', 10), state='readonly')
+        day_combo.pack(side=tk.LEFT, padx=1)
 
-        # 确认按钮 - 显示选中日期的记录
-        tk.Button(filter_frame, text="确认查看", command=self.confirm_date_filter,
-                  font=('微软雅黑', 9, 'bold'), bg='#3498db', fg='white').pack(side=tk.LEFT, padx=5)
+        # 确认按钮
+        tk.Button(filter_frame, text="查询", command=self.confirm_date_filter,
+                  font=('微软雅黑', 9), bg=self.COLORS['primary'],
+                  fg=self.COLORS['white'], relief='flat',
+                  cursor='hand2', borderwidth=0).pack(side=tk.LEFT, padx=8)
 
-        tk.Button(filter_frame, text="今天", command=self.show_today_records, font=('微软雅黑', 9), bg='#27ae60', fg='white').pack(side=tk.LEFT, padx=2)
-        tk.Button(filter_frame, text="本月", command=self.show_month_records, font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=2)
-        tk.Button(filter_frame, text="本年", command=self.show_year_records, font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=2)
-        tk.Button(filter_frame, text="全部", command=self.show_all_records, font=('微软雅黑', 9)).pack(side=tk.LEFT, padx=2)
+        # 快捷筛选按钮 - 深蓝风格
+        tk.Button(filter_frame, text="今天", command=self.show_today_records,
+                  font=('微软雅黑', 9), bg=self.COLORS['primary_light'],
+                  fg=self.COLORS['white'], relief='flat',
+                  cursor='hand2', borderwidth=0).pack(side=tk.LEFT, padx=3)
+        tk.Button(filter_frame, text="本月", command=self.show_month_records,
+                  font=('微软雅黑', 9), bg=self.COLORS['card_bg'],
+                  fg=self.COLORS['text'], relief='solid', borderwidth=1,
+                  cursor='hand2').pack(side=tk.LEFT, padx=3)
+        tk.Button(filter_frame, text="本年", command=self.show_year_records,
+                  font=('微软雅黑', 9), bg=self.COLORS['card_bg'],
+                  fg=self.COLORS['text'], relief='solid', borderwidth=1,
+                  cursor='hand2').pack(side=tk.LEFT, padx=3)
+        tk.Button(filter_frame, text="全部", command=self.show_all_records,
+                  font=('微软雅黑', 9), bg=self.COLORS['card_bg'],
+                  fg=self.COLORS['text'], relief='solid', borderwidth=1,
+                  cursor='hand2').pack(side=tk.LEFT, padx=3)
         
-        # 记录表格
-        tree_frame = tk.Frame(right_frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # ===== 记录表格 =====
+        tree_frame = tk.Frame(right_frame, bg=self.COLORS['white'])
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
         
         # 滚动条
-        scrollbar_y = tk.Scrollbar(tree_frame)
+        scrollbar_y = tk.Scrollbar(tree_frame, bg=self.COLORS['light'])
         scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
         
-        scrollbar_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+        scrollbar_x = tk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, bg=self.COLORS['light'])
         scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
         
         # 表格（树形显示：购买记录为父节点，退货为子节点）
         self.tree = ttk.Treeview(
             tree_frame,
             columns=('ID', '日期', '数量', '明细', '总金额', '备注'),
-            show='tree headings',  # 显示树形结构 + 列标题
+            show='tree headings',
             yscrollcommand=scrollbar_y.set,
-            xscrollcommand=scrollbar_x.set
+            xscrollcommand=scrollbar_x.set,
+            style='Custom.Treeview'
         )
         
         # 设置树形列宽度
-        self.tree.column('#0', width=30, stretch=False)  # 树形展开列
+        self.tree.column('#0', width=30, stretch=False)
         
-        # 设置列
+        # 设置列 - 深蓝风格表头
         self.tree.heading('ID', text='ID')
         self.tree.heading('日期', text='📅 日期')
         self.tree.heading('数量', text='📦 数量')
         self.tree.heading('明细', text='📋 明细')
-        self.tree.heading('总金额', text='💵 总金额')
+        self.tree.heading('总金额', text='💵 金额')
         self.tree.heading('备注', text='📝 备注')
         
-        self.tree.column('ID', width=50, anchor='center')
-        self.tree.column('日期', width=100, anchor='center')
-        self.tree.column('数量', width=70, anchor='center')
-        self.tree.column('明细', width=180, anchor='w')
+        self.tree.column('ID', width=45, anchor='center')
+        self.tree.column('日期', width=90, anchor='center')
+        self.tree.column('数量', width=60, anchor='center')
+        self.tree.column('明细', width=160, anchor='w')
         self.tree.column('总金额', width=90, anchor='center')
         self.tree.column('备注', width=120, anchor='w')
         
@@ -371,131 +556,117 @@ class AccountingApp:
         scrollbar_y.config(command=self.tree.yview)
         scrollbar_x.config(command=self.tree.xview)
 
-        # 合计金额显示
-        total_frame = tk.Frame(right_frame, bg='#f0f0f0')
-        total_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
+        # ===== 合计金额显示 =====
+        total_frame = tk.Frame(right_frame, bg=self.COLORS['light'])
+        total_frame.pack(fill=tk.X, padx=10, pady=(4, 10), ipady=6)
 
-        tk.Label(total_frame, text="合计金额:", font=('微软雅黑', 11, 'bold'), bg='#f0f0f0', fg='#2c3e50').pack(side=tk.LEFT)
-        self.total_label = tk.Label(total_frame, text="¥0.00", font=('微软雅黑', 12, 'bold'), bg='#f0f0f0', fg='#e74c3c')
-        self.total_label.pack(side=tk.LEFT, padx=10)
+        tk.Label(total_frame, text="💰 合计:", font=('微软雅黑', 11, 'bold'), 
+                bg=self.COLORS['light'], fg=self.COLORS['text']).pack(side=tk.LEFT, padx=10)
+        self.total_label = tk.Label(total_frame, text="¥0.00", 
+                                   font=('微软雅黑', 14, 'bold'),
+                                   bg=self.COLORS['light'], fg=self.COLORS['primary'])
+        self.total_label.pack(side=tk.LEFT, padx=4)
 
-        # 右键菜单
-        self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="🖨️ 打印小票", command=self.print_selected_record)
+        # ===== 右键菜单 - 苹果风格 =====
+        self.context_menu = tk.Menu(self.root, tearoff=0, 
+                                   bg=self.COLORS['white'], fg=self.COLORS['dark'],
+                                   activebackground=self.COLORS['selected_bg'],
+                                   activeforeground=self.COLORS['dark'],
+                                   font=('微软雅黑', 10))
+        self.context_menu.add_command(label="打印小票", command=self.print_selected_record)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="📝 编辑备注", command=self.edit_note)
-        self.context_menu.add_command(label="✏️ 编辑明细", command=self.edit_quantity_price)
+        self.context_menu.add_command(label="编辑备注", command=self.edit_note)
+        self.context_menu.add_command(label="编辑明细", command=self.edit_quantity_price)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="🔄 部分退货", command=self.convert_to_return)
+        self.context_menu.add_command(label="部分退货", command=self.convert_to_return)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="🗑️ 删除记录", command=self.delete_selected)
+        self.context_menu.add_command(label="删除记录", command=self.delete_selected)
         self.tree.bind('<Button-3>', self.show_context_menu)
         
-        # 底部按钮栏
-        bottom_frame = tk.Frame(self.root, bg='#ecf0f1', height=50)
+        # ===== 底部按钮栏 - 深蓝色 =====
+        bottom_frame = tk.Frame(self.root, bg=self.COLORS['primary'], height=50)
         bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
         bottom_frame.pack_propagate(False)
         
-        btn_container = tk.Frame(bottom_frame, bg='#ecf0f1')
-        btn_container.pack(pady=10)
+        btn_container = tk.Frame(bottom_frame, bg=self.COLORS['primary'])
+        btn_container.pack(pady=8)
         
-        tk.Button(
-            btn_container, 
-            text="💾 导出CSV", 
-            command=self.export_csv,
-            font=('微软雅黑', 10),
-            bg='#3498db',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
+        # 创建按钮的辅助函数 - 深蓝风格
+        def create_btn(parent, text, command, bg_color, fg_color=None):
+            return tk.Button(
+                parent,
+                text=text,
+                command=command,
+                font=('微软雅黑', 10),
+                bg=bg_color,
+                fg=fg_color or self.COLORS['white'],
+                relief='flat',
+                cursor='hand2',
+                padx=12,
+                borderwidth=0,
+                activebackground=self.COLORS['primary_dark'],
+                activeforeground=self.COLORS['white']
+            )
         
-        tk.Button(
-            btn_container, 
-            text="📥 导入CSV", 
-            command=self.import_csv,
-            font=('微软雅黑', 10),
-            bg='#9b59b6',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(
-            btn_container,
-            text="📥 导入Excel",
-            command=self.import_excel,
-            font=('微软雅黑', 10),
-            bg='#16a085',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            btn_container,
-            text="📊 月度统计",
-            command=self.show_monthly_stats,
-            font=('微软雅黑', 10),
-            bg='#e67e22',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            btn_container,
-            text="🖨️ 打印设置",
-            command=self.show_printer_settings,
-            font=('微软雅黑', 10),
-            bg='#1abc9c',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            btn_container,
-            text="⚙️ 系统设置",
-            command=self.show_settings,
-            font=('微软雅黑', 10),
-            bg='#34495e',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            btn_container,
-            text="❌ 退出",
-            command=self.root.quit,
-            font=('微软雅黑', 10),
-            bg='#e74c3c',
-            fg='white'
-        ).pack(side=tk.LEFT, padx=5)
+        create_btn(btn_container, "💾 导出CSV", self.export_csv, 
+                  self.COLORS['primary_light']).pack(side=tk.LEFT, padx=4)
+        create_btn(btn_container, "📥 导入CSV", self.import_csv,
+                  self.COLORS['primary_light']).pack(side=tk.LEFT, padx=4)
+        create_btn(btn_container, "📥 导入Excel", self.import_excel,
+                  self.COLORS['primary_light']).pack(side=tk.LEFT, padx=4)
+        create_btn(btn_container, "📊 月度统计", self.show_monthly_stats,
+                  self.COLORS['warning']).pack(side=tk.LEFT, padx=4)
+        create_btn(btn_container, "🖨️ 打印设置", self.show_printer_settings,
+                  self.COLORS['secondary']).pack(side=tk.LEFT, padx=4)
+        create_btn(btn_container, "⚙️ 系统设置", self.show_settings,
+                  self.COLORS['secondary']).pack(side=tk.LEFT, padx=4)
+        create_btn(btn_container, "❌ 退出", self.root.quit,
+                  self.COLORS['danger']).pack(side=tk.LEFT, padx=4)
 
         # 设置初始焦点（第一个商品行的数量输入框）
         self.root.after(100, lambda: self.item_rows[0]['qty_entry'].focus_set() if self.item_rows else None)
 
     def add_item_row(self):
         """添加一个商品行"""
-        row_frame = tk.Frame(self.items_container, bg='#f0f0f0')
-        row_frame.pack(fill=tk.X, pady=1)
+        row_frame = tk.Frame(self.items_container, bg=self.COLORS['white'])
+        row_frame.pack(fill=tk.X, pady=4)
         
         qty_var = tk.StringVar()
         price_var = tk.StringVar()
         
         # 数量输入
-        qty_entry = tk.Entry(row_frame, textvariable=qty_var, font=('微软雅黑', 10), width=8)
-        qty_entry.pack(side=tk.LEFT, padx=2)
+        qty_entry = tk.Entry(row_frame, textvariable=qty_var, font=('微软雅黑', 10), 
+                            width=10, bg=self.COLORS['white'], fg=self.COLORS['dark'],
+                            relief='solid', borderwidth=1,
+                            highlightthickness=0)
+        qty_entry.pack(side=tk.LEFT, padx=2, ipady=3)
         qty_var.trace_add('write', lambda *args: self.update_item_subtotal(row_data))
         
         # 单价输入
-        price_entry = tk.Entry(row_frame, textvariable=price_var, font=('微软雅黑', 10), width=8)
-        price_entry.pack(side=tk.LEFT, padx=2)
+        price_entry = tk.Entry(row_frame, textvariable=price_var, font=('微软雅黑', 10),
+                              width=10, bg=self.COLORS['white'], fg=self.COLORS['dark'],
+                              relief='solid', borderwidth=1,
+                              highlightthickness=0)
+        price_entry.pack(side=tk.LEFT, padx=2, ipady=3)
         price_var.trace_add('write', lambda *args: self.update_item_subtotal(row_data))
         
         # 小计显示
-        subtotal_label = tk.Label(row_frame, text="¥0.00", font=('微软雅黑', 10), bg='#f0f0f0', width=10, anchor='w')
+        subtotal_label = tk.Label(row_frame, text="¥0.00", font=('微软雅黑', 10),
+                                 bg=self.COLORS['white'], fg=self.COLORS['gray'],
+                                 width=12, anchor='w')
         subtotal_label.pack(side=tk.LEFT, padx=2)
         
-        # 删除按钮
+        # 删除按钮 - 苹果风格文字按钮
         def delete_row():
             if len(self.item_rows) > 1:  # 至少保留一行
                 row_frame.destroy()
                 self.item_rows.remove(row_data)
                 self.update_summary()
         
-        del_btn = tk.Button(row_frame, text="🗑", command=delete_row, font=('微软雅黑', 8), 
-                           bg='#e74c3c', fg='white', width=2)
+        del_btn = tk.Button(row_frame, text="×", command=delete_row, font=('微软雅黑', 12, 'bold'), 
+                           bg=self.COLORS['white'], fg=self.COLORS['text_hint'], 
+                           width=2, relief='flat', cursor='hand2',
+                           borderwidth=0, activebackground=self.COLORS['light'])
         del_btn.pack(side=tk.LEFT, padx=2)
         
         row_data = {
@@ -1025,7 +1196,7 @@ class AccountingApp:
         self.update_total()
 
     def update_stats(self):
-        """更新统计"""
+        """更新统计 - 深蓝风格"""
         today = datetime.now().strftime("%Y-%m-%d")
         today_records = [r for r in self.records if r['date'] == today]
         
@@ -1045,19 +1216,14 @@ class AccountingApp:
         net_qty = sale_qty - return_qty
         net_amount = sale_amount - return_amount
         
-        avg_price = sale_amount / sale_qty if sale_qty > 0 else 0
-        
-        stats_text = f"""
-📅 今日 ({today})
-━━━━━━━━━━━━━━━━
-✅ 销售: {sale_qty}套 ¥{sale_amount:.2f}
-🔄 退货: {return_qty}套 ¥{return_amount:.2f}
-━━━━━━━━━━━━━━━━
-📦 净数量: {net_qty} 套
-💵 净金额: ¥{net_amount:.2f}
-💰 平均单价: ¥{avg_price:.2f}
-📝 记录数: {len(today_records)} 条
-        """
+        # 深蓝风格统计
+        stats_text = f"""📅 今日 {today}
+━━━━━━━━━━━━━━
+✅ 销售: {sale_qty}套 ¥{sale_amount:.0f}
+🔄 退货: {return_qty}套 ¥{return_amount:.0f}
+━━━━━━━━━━━━━━
+📦 净额: {net_qty}套 ¥{net_amount:.0f}
+"""
         self.stats_label.config(text=stats_text)
 
     def confirm_date_filter(self):
@@ -1074,7 +1240,7 @@ class AccountingApp:
 
         # 更新状态
         self.showing_today_only = False
-        self.status_label.config(text=f"📅 {date_str}", fg='#34495e')
+        self.status_label.config(text=date_str, fg=self.COLORS['gray'])
 
         if filtered:
             self._display_records_tree(filtered)
@@ -1086,7 +1252,7 @@ class AccountingApp:
                 self.tree.delete(item)
             # 没有记录时显示空状态
             self.stats_label.config(
-                text=f"\n📅 {date_str}\n━━━━━━━━━━━━━━━━\n📭 该日暂无记录\n\n请选择其他日期或添加新记录",
+                text=f"{date_str}\n暂无记录",
                 justify=tk.CENTER
             )
 
@@ -1133,7 +1299,7 @@ class AccountingApp:
         self.showing_today_only = False
         self.update_tree_all()
         # 更新状态标签
-        self.status_label.config(text="📋 全部记录", fg='#3498db')
+        self.status_label.config(text="📋 全部", fg=self.COLORS['text_light'])
 
     def show_today_records(self):
         """显示今日记录"""
@@ -1145,7 +1311,7 @@ class AccountingApp:
         self.filter_month_var.set(str(today.month).zfill(2))
         self.filter_day_var.set(str(today.day).zfill(2))
         # 更新状态标签
-        self.status_label.config(text="实时销售", fg='#27ae60')
+        self.status_label.config(text="🔴 今日", fg=self.COLORS['primary'])
 
     def show_month_records(self):
         """显示本月记录（树形结构）"""
@@ -1157,7 +1323,7 @@ class AccountingApp:
         self.filter_year_var.set(str(datetime.now().year))
         self.filter_month_var.set(str(datetime.now().month).zfill(2))
         self.filter_day_var.set("01")
-        self.status_label.config(text="📆 本月记录", fg='#9b59b6')
+        self.status_label.config(text="📆 本月", fg=self.COLORS['text_light'])
 
     def show_year_records(self):
         """显示本年记录（树形结构）"""
@@ -1169,7 +1335,7 @@ class AccountingApp:
         self.filter_year_var.set(str(datetime.now().year))
         self.filter_month_var.set("01")
         self.filter_day_var.set("01")
-        self.status_label.config(text="📊 本年记录", fg='#e67e22')
+        self.status_label.config(text="📊 本年", fg=self.COLORS['text_light'])
 
     def show_context_menu(self, event):
         """显示右键菜单"""
