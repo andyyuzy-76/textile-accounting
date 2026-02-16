@@ -34,10 +34,10 @@ except ImportError:
     def perform_update(callback=None):
         return False, "更新模块未安装"
     def get_current_version():
-        return "1.12.0"
+        return "1.13.0"
 
 # 版本信息
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -573,15 +573,15 @@ class AccountingApp:
                                    activebackground=self.COLORS['selected_bg'],
                                    activeforeground=self.COLORS['dark'],
                                    font=('微软雅黑', 10))
+        self.context_menu.add_command(label="查看明细", command=self.show_record_details)
         self.context_menu.add_command(label="打印小票", command=self.print_selected_record)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="编辑备注", command=self.edit_note)
         self.context_menu.add_command(label="编辑明细", command=self.edit_quantity_price)
         self.context_menu.add_separator()
-        self.context_menu.add_command(label="部分退货", command=self.convert_to_return)
-        self.context_menu.add_separator()
         self.context_menu.add_command(label="删除记录", command=self.delete_selected)
         self.tree.bind('<Button-3>', self.show_context_menu)
+        self.tree.bind('<Double-Button-1>', self.show_record_details)  # 双击查看明细
         
         # ===== 底部按钮栏 - 深蓝色 =====
         bottom_frame = tk.Frame(self.root, bg=self.COLORS['primary'], height=50)
@@ -1337,12 +1337,192 @@ class AccountingApp:
         self.filter_day_var.set("01")
         self.status_label.config(text="📊 本年", fg=self.COLORS['text_light'])
 
+    def show_record_details(self, event=None):
+        """显示选中记录的完整商品明细"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        
+        item = selected[0]
+        values = self.tree.item(item, 'values')
+        if not values or len(values) < 5:
+            return
+        
+        record_id = int(values[0])
+        
+        # 找到对应记录
+        record = None
+        for r in self.records:
+            if r['id'] == record_id:
+                record = r
+                break
+        
+        if not record:
+            return
+        
+        # 创建明细窗口
+        detail_window = tk.Toplevel(self.root)
+        detail_window.title(f"商品明细 - 记录#{record_id}")
+        
+        # 计算窗口位置：显示在主窗口中间
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        
+        # 弹出窗口尺寸
+        popup_width = 500
+        popup_height = 450
+        
+        # 位置：主窗口中间
+        popup_x = main_x + (main_width - popup_width) // 2
+        popup_y = main_y + (main_height - popup_height) // 2
+        
+        detail_window.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
+        detail_window.resizable(True, True)
+        detail_window.transient(self.root)
+        
+        # 顶部信息区
+        info_frame = tk.Frame(detail_window, bg=self.COLORS['light'])
+        info_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        is_return = record.get('type') == 'return' or record['quantity'] < 0
+        type_text = "退货" if is_return else "销售"
+        type_color = self.COLORS['danger'] if is_return else self.COLORS['success']
+        
+        tk.Label(info_frame, text=f"日期: {record['date']}", 
+                font=('微软雅黑', 11), bg=self.COLORS['light']).pack(anchor='w', pady=2)
+        tk.Label(info_frame, text=f"类型: {type_text}", 
+                font=('微软雅黑', 11, 'bold'), bg=self.COLORS['light'], fg=type_color).pack(anchor='w', pady=2)
+        
+        note_text = record.get('note', '')
+        if note_text:
+            tk.Label(info_frame, text=f"备注: {note_text}", 
+                    font=('微软雅黑', 10), bg=self.COLORS['light'], fg=self.COLORS['gray']).pack(anchor='w', pady=2)
+        
+        # 明细表格区
+        table_frame = tk.Frame(detail_window, bg=self.COLORS['white'], 
+                              relief='solid', borderwidth=1)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # 表头
+        header_frame = tk.Frame(table_frame, bg=self.COLORS['primary'])
+        header_frame.pack(fill=tk.X)
+        
+        tk.Label(header_frame, text="序号", font=('微软雅黑', 10, 'bold'),
+                bg=self.COLORS['primary'], fg=self.COLORS['white'], width=5).pack(side=tk.LEFT, padx=3, pady=8)
+        tk.Label(header_frame, text="类型", font=('微软雅黑', 10, 'bold'),
+                bg=self.COLORS['primary'], fg=self.COLORS['white'], width=6).pack(side=tk.LEFT, padx=3, pady=8)
+        tk.Label(header_frame, text="数量", font=('微软雅黑', 10, 'bold'),
+                bg=self.COLORS['primary'], fg=self.COLORS['white'], width=8).pack(side=tk.LEFT, padx=3, pady=8)
+        tk.Label(header_frame, text="单价", font=('微软雅黑', 10, 'bold'),
+                bg=self.COLORS['primary'], fg=self.COLORS['white'], width=10).pack(side=tk.LEFT, padx=3, pady=8)
+        tk.Label(header_frame, text="小计", font=('微软雅黑', 10, 'bold'),
+                bg=self.COLORS['primary'], fg=self.COLORS['white'], width=10).pack(side=tk.LEFT, padx=3, pady=8)
+        
+        # 商品明细行
+        items = record.get('items', [])
+        if not items:
+            items = [{
+                'quantity': abs(record['quantity']),
+                'unit_price': record.get('unit_price', 0)
+            }]
+        
+        total_qty = 0
+        total_return_qty = 0
+        total_amount = 0.0
+        total_return_amount = 0.0
+        
+        for i, item_data in enumerate(items):
+            qty = item_data.get('quantity', 0)
+            price = item_data.get('unit_price', 0)
+            subtotal = qty * price
+            
+            # 判断是销售还是退货
+            is_item_return = qty < 0
+            item_type = "退货" if is_item_return else "销售"
+            item_type_color = self.COLORS['danger'] if is_item_return else self.COLORS['success']
+            
+            if is_item_return:
+                total_return_qty += abs(qty)
+                total_return_amount += abs(subtotal)
+            else:
+                total_qty += qty
+                total_amount += subtotal
+            
+            row_bg = self.COLORS['light'] if i % 2 == 0 else self.COLORS['white']
+            
+            row_frame = tk.Frame(table_frame, bg=row_bg)
+            row_frame.pack(fill=tk.X)
+            
+            tk.Label(row_frame, text=str(i + 1), font=('微软雅黑', 10),
+                    bg=row_bg, width=5).pack(side=tk.LEFT, padx=3, pady=6)
+            tk.Label(row_frame, text=item_type, font=('微软雅黑', 10, 'bold'),
+                    bg=row_bg, fg=item_type_color, width=6).pack(side=tk.LEFT, padx=3, pady=6)
+            tk.Label(row_frame, text=f"{abs(qty)}套", font=('微软雅黑', 10),
+                    bg=row_bg, width=8).pack(side=tk.LEFT, padx=3, pady=6)
+            tk.Label(row_frame, text=f"¥{price:.2f}", font=('微软雅黑', 10),
+                    bg=row_bg, width=10).pack(side=tk.LEFT, padx=3, pady=6)
+            
+            subtotal_text = f"-¥{abs(subtotal):.2f}" if is_item_return else f"¥{subtotal:.2f}"
+            subtotal_color = self.COLORS['danger'] if is_item_return else self.COLORS['primary']
+            tk.Label(row_frame, text=subtotal_text, font=('微软雅黑', 10, 'bold'),
+                    bg=row_bg, fg=subtotal_color, width=10).pack(side=tk.LEFT, padx=3, pady=6)
+        
+        # 合计行
+        summary_frame = tk.Frame(table_frame, bg=self.COLORS['primary_light'])
+        summary_frame.pack(fill=tk.X)
+        
+        net_qty = total_qty - total_return_qty
+        net_amount = total_amount - total_return_amount
+        
+        tk.Label(summary_frame, text="合计", font=('微软雅黑', 11, 'bold'),
+                bg=self.COLORS['primary_light'], fg=self.COLORS['white'], width=5).pack(side=tk.LEFT, padx=3, pady=10)
+        tk.Label(summary_frame, text="", bg=self.COLORS['primary_light'], width=6).pack(side=tk.LEFT, padx=3)
+        tk.Label(summary_frame, text=f"{net_qty}套", font=('微软雅黑', 11, 'bold'),
+                bg=self.COLORS['primary_light'], fg=self.COLORS['white'], width=8).pack(side=tk.LEFT, padx=3, pady=10)
+        tk.Label(summary_frame, text="", bg=self.COLORS['primary_light'], width=10).pack(side=tk.LEFT, padx=3)
+        
+        amount_text = f"-¥{abs(net_amount):.2f}" if net_amount < 0 else f"¥{net_amount:.2f}"
+        amount_color = '#ff6b6b' if net_amount < 0 else self.COLORS['white']
+        tk.Label(summary_frame, text=amount_text, font=('微软雅黑', 12, 'bold'),
+                bg=self.COLORS['primary_light'], fg=amount_color, width=10).pack(side=tk.LEFT, padx=3, pady=10)
+        
+        # 按钮区
+        btn_frame = tk.Frame(detail_window, bg=self.COLORS['light'])
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # 打印小票按钮
+        def print_this_record():
+            detail_window.destroy()
+            self.print_selected_record()
+        
+        print_btn = tk.Button(btn_frame, text="打印小票", command=print_this_record,
+                             font=('微软雅黑', 11), bg='#27ae60', fg='white',
+                             width=12, relief='flat', cursor='hand2')
+        print_btn.pack(side=tk.LEFT, padx=20)
+        
+        close_btn = tk.Button(btn_frame, text="关闭", command=detail_window.destroy,
+                             font=('微软雅黑', 11), bg=self.COLORS['primary'], fg=self.COLORS['white'],
+                             width=12, relief='flat', cursor='hand2')
+        close_btn.pack(side=tk.RIGHT, padx=20)
+        
+        detail_window.bind('<Escape>', lambda e: detail_window.destroy())
+
     def show_context_menu(self, event):
         """显示右键菜单"""
         item = self.tree.identify_row(event.y)
         if item:
             self.tree.selection_set(item)
-            self.context_menu.post(event.x_root, event.y_root)
+            # 使用 tk_popup 在指定位置显示菜单
+            screen_width = self.root.winfo_screenwidth()
+            menu_x = int(screen_width * 0.6)
+            menu_y = event.y_root
+            try:
+                self.context_menu.tk_popup(menu_x, menu_y)
+            finally:
+                self.context_menu.grab_release()
     
     def edit_note(self):
         """编辑选中记录的备注"""
@@ -1369,7 +1549,20 @@ class AccountingApp:
         # 创建编辑窗口
         edit_window = tk.Toplevel(self.root)
         edit_window.title(f"编辑备注 - 记录#{record_id}")
-        edit_window.geometry("400x300")
+        
+        # 计算窗口位置：显示在主窗口中间
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        
+        popup_width = 400
+        popup_height = 300
+        popup_x = main_x + (main_width - popup_width) // 2
+        popup_y = main_y + (main_height - popup_height) // 2
+        
+        edit_window.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
         edit_window.transient(self.root)
         edit_window.grab_set()  # 模态窗口
         
@@ -1434,7 +1627,20 @@ class AccountingApp:
         # 创建编辑窗口
         edit_window = tk.Toplevel(self.root)
         edit_window.title(f"编辑明细 - 记录#{record_id}")
-        edit_window.geometry("420x600")
+        
+        # 计算窗口位置：显示在主窗口中间
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        
+        popup_width = 420
+        popup_height = 600
+        popup_x = main_x + (main_width - popup_width) // 2
+        popup_y = main_y + (main_height - popup_height) // 2
+        
+        edit_window.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
         edit_window.resizable(True, True)
         edit_window.transient(self.root)
         edit_window.grab_set()
@@ -1521,7 +1727,20 @@ class AccountingApp:
             """弹出添加商品对话框（支持多行）"""
             dialog = tk.Toplevel(edit_window)
             dialog.title("添加商品")
-            dialog.geometry("400x400")
+            
+            # 计算窗口位置：显示在编辑明细窗口右边
+            edit_window.update_idletasks()
+            edit_x = edit_window.winfo_x()
+            edit_y = edit_window.winfo_y()
+            edit_width = edit_window.winfo_width()
+            edit_height = edit_window.winfo_height()
+            
+            popup_width = 400
+            popup_height = 400
+            popup_x = edit_x + edit_width + 10  # 编辑明细窗口右边
+            popup_y = edit_y + (edit_height - popup_height) // 2  # 垂直居中
+            
+            dialog.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
             dialog.transient(edit_window)
             dialog.grab_set()
             
@@ -1643,6 +1862,145 @@ class AccountingApp:
                           font=('微软雅黑', 10), bg='#3498db', fg='white', width=12)
         add_btn.pack(side=tk.LEFT, padx=20)
         
+        # 添加退货按钮
+        def show_add_return_dialog():
+            """显示添加退货对话框"""
+            dialog = tk.Toplevel(edit_window)
+            dialog.title("添加退货")
+            
+            # 计算窗口位置：显示在编辑明细窗口右边
+            edit_window.update_idletasks()
+            edit_x = edit_window.winfo_x()
+            edit_y = edit_window.winfo_y()
+            edit_width = edit_window.winfo_width()
+            edit_height = edit_window.winfo_height()
+            
+            popup_width = 400
+            popup_height = 400
+            popup_x = edit_x + edit_width + 10  # 编辑明细窗口右边
+            popup_y = edit_y + (edit_height - popup_height) // 2  # 垂直居中
+            
+            dialog.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
+            dialog.transient(edit_window)
+            dialog.grab_set()
+            
+            # 存储所有商品行的数据
+            item_rows = []
+            
+            # 商品列表区域
+            list_frame = tk.LabelFrame(dialog, text="退货商品", font=('微软雅黑', 10))
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            
+            # 表头
+            header_frame = tk.Frame(list_frame)
+            header_frame.pack(fill=tk.X, padx=5, pady=2)
+            tk.Label(header_frame, text="数量", font=('微软雅黑', 9), width=8).pack(side=tk.LEFT)
+            tk.Label(header_frame, text="单价", font=('微软雅黑', 9), width=8).pack(side=tk.LEFT)
+            tk.Label(header_frame, text="小计", font=('微软雅黑', 9), width=10).pack(side=tk.LEFT)
+            
+            # 商品行容器
+            rows_container = tk.Frame(list_frame)
+            rows_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            def add_item_row():
+                """添加一行商品输入"""
+                row_frame = tk.Frame(rows_container)
+                row_frame.pack(fill=tk.X, pady=2)
+                
+                qty_var = tk.StringVar()
+                price_var = tk.StringVar()
+                
+                qty_entry = tk.Entry(row_frame, textvariable=qty_var, font=('微软雅黑', 10), width=8)
+                qty_entry.pack(side=tk.LEFT, padx=2)
+                
+                price_entry = tk.Entry(row_frame, textvariable=price_var, font=('微软雅黑', 10), width=8)
+                price_entry.pack(side=tk.LEFT, padx=2)
+                
+                subtotal_label = tk.Label(row_frame, text="-¥0.00", font=('微软雅黑', 10), width=10, 
+                                         anchor='w', fg='#e74c3c')
+                subtotal_label.pack(side=tk.LEFT, padx=2)
+                
+                def update_subtotal(*args):
+                    try:
+                        qty = int(qty_var.get() or 0)
+                        price = float(price_var.get() or 0)
+                        subtotal_label.config(text=f"-¥{qty * price:.2f}")
+                    except:
+                        subtotal_label.config(text="-¥0.00")
+                
+                qty_var.trace_add('write', update_subtotal)
+                price_var.trace_add('write', update_subtotal)
+                
+                def delete_row():
+                    if len(item_rows) > 1:
+                        row_frame.destroy()
+                        item_rows.remove(row_data)
+                
+                del_btn = tk.Button(row_frame, text="🗑", command=delete_row, 
+                                   font=('微软雅黑', 8), bg='#e74c3c', fg='white', width=2)
+                del_btn.pack(side=tk.LEFT, padx=2)
+                
+                row_data = {
+                    'qty_var': qty_var,
+                    'price_var': price_var,
+                    'frame': row_frame
+                }
+                item_rows.append(row_data)
+                
+                qty_entry.bind('<Return>', lambda e: price_entry.focus())
+                price_entry.bind('<Return>', lambda e: add_item_row())
+                
+                qty_entry.focus_set()
+                return row_data
+            
+            # 添加第一行
+            add_item_row()
+            
+            # 添加商品行按钮
+            add_row_btn = tk.Button(dialog, text="➕ 添加退货行", command=add_item_row,
+                                   font=('微软雅黑', 10), bg='#e74c3c', fg='white')
+            add_row_btn.pack(pady=5)
+            
+            def do_add():
+                """确认添加退货商品"""
+                try:
+                    added_count = 0
+                    for row in item_rows:
+                        qty_str = row['qty_var'].get().strip()
+                        price_str = row['price_var'].get().strip()
+                        
+                        if qty_str and price_str:
+                            qty = int(qty_str)
+                            price = float(price_str)
+                            if qty > 0 and price > 0:
+                                # 退货商品数量为负
+                                items.append({'quantity': -qty, 'unit_price': price})
+                                added_count += 1
+                    
+                    if added_count > 0:
+                        refresh_list()
+                        dialog.destroy()
+                        messagebox.showinfo("成功", f"已添加 {added_count} 个退货商品")
+                    else:
+                        messagebox.showwarning("提示", "请至少填写一个有效的商品")
+                except ValueError:
+                    messagebox.showerror("错误", "请输入有效的数字")
+            
+            # 按钮区
+            btn_frame = tk.Frame(dialog)
+            btn_frame.pack(pady=10)
+            
+            tk.Button(btn_frame, text="✅ 确认添加", command=do_add,
+                     font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+            tk.Button(btn_frame, text="❌ 取消", command=dialog.destroy,
+                     font=('微软雅黑', 11), bg='#95a5a6', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+            
+            dialog.bind('<Control-Return>', lambda e: do_add())
+        
+        add_return_btn = tk.Button(action_frame, text="➖ 添加退货", command=show_add_return_dialog,
+                                  font=('微软雅黑', 10), bg='#e74c3c', fg='white', width=12)
+        add_return_btn.pack(side=tk.LEFT, padx=20)
+        
         # 总计区
         total_frame = tk.Frame(edit_window, bg='#ecf0f1')
         total_frame.pack(fill=tk.X, padx=15, pady=10)
@@ -1725,7 +2083,20 @@ class AccountingApp:
         # 创建退货窗口
         return_window = tk.Toplevel(self.root)
         return_window.title(f"部分退货 - 记录#{record_id}")
-        return_window.geometry("450x420")
+        
+        # 计算窗口位置：显示在主窗口中间
+        self.root.update_idletasks()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        
+        popup_width = 450
+        popup_height = 420
+        popup_x = main_x + (main_width - popup_width) // 2
+        popup_y = main_y + (main_height - popup_height) // 2
+        
+        return_window.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
         return_window.transient(self.root)
         return_window.grab_set()
         
