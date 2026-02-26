@@ -37,7 +37,7 @@ except ImportError:
         return "1.13.0"
 
 # 版本信息
-VERSION = "1.13.0"
+VERSION = "1.14.0"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
@@ -958,7 +958,7 @@ class AccountingApp:
             self._insert_record(record, parent='')
 
         # 设置退货记录的颜色
-        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('return', foreground='#e74c3c', background='#fef9f9')
         self.tree.tag_configure('child_return', foreground='#e74c3c', background='#fef9f9')
         self.update_total()
 
@@ -1004,7 +1004,7 @@ class AccountingApp:
             self._insert_record(record, parent='')
 
         # 设置退货记录的颜色
-        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('return', foreground='#e74c3c', background='#fef9f9')
         self.tree.tag_configure('child_return', foreground='#e74c3c', background='#fef9f9')
         self.update_total()
 
@@ -1047,7 +1047,7 @@ class AccountingApp:
             self._insert_record(record, parent='')
 
         # 设置退货记录的颜色
-        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('return', foreground='#e74c3c', background='#fef9f9')
         self.tree.tag_configure('child_return', foreground='#e74c3c', background='#fef9f9')
         self.update_total()
 
@@ -1192,7 +1192,7 @@ class AccountingApp:
             ), tags=tags)
         
         # 设置退货记录的颜色
-        self.tree.tag_configure('return', foreground='#e74c3c')
+        self.tree.tag_configure('return', foreground='#e74c3c', background='#fef9f9')
         self.update_total()
 
     def update_stats(self):
@@ -1856,7 +1856,10 @@ class AccountingApp:
                      font=('微软雅黑', 11), bg='#e74c3c', fg='white', width=12).pack(side=tk.LEFT, padx=10)
             
             # 快捷键：Ctrl+Enter 确认添加
-            dialog.bind('<Control-Return>', lambda e: do_add())
+            def on_ctrl_enter(event):
+                do_add()
+                return "break"
+            dialog.bind('<Control-Return>', on_ctrl_enter)
         
         add_btn = tk.Button(action_frame, text="➕ 添加商品", command=show_add_dialog,
                           font=('微软雅黑', 10), bg='#3498db', fg='white', width=12)
@@ -1995,7 +1998,10 @@ class AccountingApp:
             tk.Button(btn_frame, text="❌ 取消", command=dialog.destroy,
                      font=('微软雅黑', 11), bg='#95a5a6', fg='white', width=12).pack(side=tk.LEFT, padx=10)
             
-            dialog.bind('<Control-Return>', lambda e: do_add())
+            def on_ctrl_enter(event):
+                do_add()
+                return "break"
+            dialog.bind('<Control-Return>', on_ctrl_enter)
         
         add_return_btn = tk.Button(action_frame, text="➖ 添加退货", command=show_add_return_dialog,
                                   font=('微软雅黑', 10), bg='#e74c3c', fg='white', width=12)
@@ -2259,7 +2265,10 @@ class AccountingApp:
         tk.Button(btn_frame, text="❌ 取消", command=return_window.destroy,
                   font=('微软雅黑', 11), bg='#95a5a6', fg='white', width=10).pack(side=tk.LEFT, padx=10)
         
-        return_window.bind('<Control-Return>', lambda e: do_return())
+        def on_ctrl_enter(event):
+            do_return()
+            return "break"
+        return_window.bind('<Control-Return>', on_ctrl_enter)
     
     def delete_selected(self):
         """删除选中记录"""
