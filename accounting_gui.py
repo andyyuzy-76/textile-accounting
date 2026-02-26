@@ -3412,10 +3412,8 @@ class AccountingApp:
             # 使用固定的新文件名（不带版本号，方便后续更新）
             new_exe_name = "家纺记账系统.exe"
             new_exe_path = os.path.join(exe_dir, new_exe_name)
-            old_exe_backup = os.path.join(exe_dir, "家纺记账系统.exe.old")
-            current_backup = current_exe + ".old"
-
-            # 创建批处理脚本
+            
+            # 创建批处理脚本 - 简化流程：直接删除旧文件，不备份
             batch_path = os.path.join(self.data_dir, 'update.bat')
 
             batch_content = f'''@echo off
@@ -3430,13 +3428,10 @@ REM 等待原程序完全退出
 echo 等待程序退出...
 timeout /t 3 /nobreak >nul
 
-REM 删除旧备份文件（如果存在）
-if exist "{current_backup}" del /f "{current_backup}" 2>nul
-if exist "{old_exe_backup}" del /f "{old_exe_backup}" 2>nul
-
-REM 备份当前EXE（重命名为 .old）
-echo 备份当前版本...
-ren "{current_exe}" "{os.path.basename(current_backup)}" 2>nul
+REM 直接删除旧的.exe文件（包括.old备份）
+if exist "{current_exe}" del /f "{current_exe}" 2>nul
+if exist "{current_exe}.old" del /f "{current_exe}.old" 2>nul
+if exist "{new_exe_path}.old" del /f "{new_exe_path}.old" 2>nul
 
 REM 将新版本复制为固定文件名
 echo 安装新版本...
@@ -3444,23 +3439,21 @@ copy /y "{downloaded_exe}" "{new_exe_path}" >nul
 
 REM 检查复制是否成功
 if not exist "{new_exe_path}" (
-    echo 安装失败，恢复旧版本...
-    ren "{current_backup}" "{os.path.basename(current_exe)}" 2>nul
-    echo 更新失败，请手动下载安装。
+    echo 安装失败，请手动下载安装。
     pause
     exit /b 1
 )
 
+REM 删除下载的临时文件
+del /f "{downloaded_exe}" 2>nul
+
 REM 启动新版本
 echo.
 echo ==========================================
-echo   启动新版本...
+echo   更新完成，启动新版本...
 echo ==========================================
 timeout /t 1 /nobreak >nul
 start "" "{new_exe_path}"
-
-REM 清理临时文件
-del /f "{downloaded_exe}" 2>nul
 
 REM 删除自己
 del /f "%~f0"
@@ -3476,6 +3469,7 @@ del /f "%~f0"
         except Exception as e:
             messagebox.showerror("安装失败", f"更新安装失败: {str(e)}\n\n请手动前往GitHub下载最新版本。")
             self.upgrade_status_var.set("❌ 更新安装失败")
+
 
 
 def main():
