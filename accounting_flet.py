@@ -15,7 +15,12 @@ import threading
 import time
 import ctypes
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
+
+from app_core.paths import get_data_dir, get_records_file
+from app_core.services.records import RecordService
+from app_core.storage import JsonStore
 
 # 导入打印模块
 try:
@@ -48,10 +53,10 @@ VERSION = "1.14.0"
 class AccountingApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        home_dir = os.path.expanduser("~")
-        self.data_dir = os.path.join(home_dir, ".accounting-tool")
-        self.data_file = os.path.join(self.data_dir, "records.json")
+        self.data_dir = str(get_data_dir())
+        self.data_file = str(get_records_file())
         os.makedirs(self.data_dir, exist_ok=True)
+        self.record_service = RecordService(JsonStore(Path(self.data_file)))
         self.records = self.load_records()
         self.item_rows = []
         self.receipt_printer = ReceiptPrinter() if PRINT_AVAILABLE and ReceiptPrinter else None
@@ -72,18 +77,12 @@ class AccountingApp:
 
     def load_records(self) -> List[Dict]:
         """加载历史记录"""
-        if os.path.exists(self.data_file):
-            try:
-                with open(self.data_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except:
-                return []
-        return []
+        self.records = self.record_service.reload()
+        return self.records
 
     def save_records(self):
         """保存记录"""
-        with open(self.data_file, "w", encoding="utf-8") as f:
-            json.dump(self.records, f, ensure_ascii=False, indent=2)
+        self.records = self.record_service.replace_records(self.records)
 
     def load_printer_settings(self):
         """加载打印机设置"""
@@ -805,11 +804,7 @@ class AccountingApp:
                 self.show_error("请输入日期！")
                 return
 
-            # 收集商品数据
             items = []
-            total_quantity = 0
-            total_amount = 0.0
-
             for row in self.item_rows:
                 qty_str = row["qty_field"].value
                 price_str = row["price_field"].value
@@ -820,8 +815,6 @@ class AccountingApp:
                         price = float(price_str)
                         if qty > 0 and price > 0:
                             items.append({"quantity": qty, "unit_price": price})
-                            total_quantity += qty
-                            total_amount += qty * price
                     except ValueError:
                         pass
 
@@ -829,46 +822,20 @@ class AccountingApp:
                 self.show_error("请至少添加一个有效的商品行！")
                 return
 
-            # 处理退货
-            if record_type == "return":
-                total_quantity = -total_quantity
-                total_amount = -total_amount
-                if note:
-                    note = f"[退货] {note}"
-                else:
-                    note = "[退货]"
-                for item in items:
-                    item["quantity"] = -item["quantity"]
-
-            # 计算平均单价
-            avg_price = (
-                abs(total_amount) / abs(total_quantity) if total_quantity != 0 else 0
+            record = self.record_service.add_record(
+                date=date,
+                items=items,
+                note=note,
+                record_type=record_type,
             )
+            self.records = self.record_service.list_records()
 
-            # 创建记录
-            record = {
-                "id": len(self.records) + 1,
-                "date": date,
-                "quantity": total_quantity,
-                "unit_price": avg_price,
-                "total_amount": total_amount,
-                "note": note,
-                "type": record_type,
-                "items": items,
-                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-
-            self.records.append(record)
-            self.save_records()
-
-            # 刷新显示
             self.refresh_display()
             self.clear_form()
 
-            # 显示成功提示
             type_label = "退货" if record_type == "return" else "销售"
             self.show_success(
-                f"✅ {type_label}记录添加成功！\n金额: ¥{abs(total_amount):.2f}"
+                f"✅ {type_label}记录添加成功！\n金额: ¥{abs(record['total_amount']):.2f}"
             )
 
         except Exception as e:
@@ -1326,23 +1293,14 @@ class AccountingApp:
     def update_stats(self):
         """更新今日统计"""
         today = datetime.now().strftime("%Y-%m-%d")
-        today_records = [r for r in self.records if r["date"] == today]
+        summary = self.record_service.summarize_by_date(today)
 
-        sale_records = [
-            r for r in today_records if r.get("type") != "return" and r["quantity"] > 0
-        ]
-        return_records = [
-            r for r in today_records if r.get("type") == "return" or r["quantity"] < 0
-        ]
-
-        sale_qty = sum(r["quantity"] for r in sale_records)
-        sale_amount = sum(r["total_amount"] for r in sale_records)
-
-        return_qty = sum(abs(r["quantity"]) for r in return_records)
-        return_amount = sum(abs(r["total_amount"]) for r in return_records)
-
-        net_qty = sale_qty - return_qty
-        net_amount = sale_amount - return_amount
+        sale_qty = summary["sale_quantity"]
+        sale_amount = summary["sale_amount"]
+        return_qty = summary["return_quantity"]
+        return_amount = summary["return_amount"]
+        net_qty = summary["net_quantity"]
+        net_amount = summary["net_amount"]
 
         self.stats_text.value = f"""📅 {today}
 ━━━━━━━━━━━━━━
@@ -1358,8 +1316,8 @@ class AccountingApp:
 
         def save_changes(e):
             new_note = note_field.value.strip()
-            record["note"] = new_note
-            self.save_records()
+            self.record_service.update_note(record["id"], new_note)
+            self.records = self.record_service.list_records()
             self.refresh_display()
             self.page.pop_dialog()
             self.show_success("记录已更新")
@@ -1415,8 +1373,8 @@ class AccountingApp:
         """删除记录"""
 
         def confirm_delete(e):
-            self.records = [r for r in self.records if r["id"] != record["id"]]
-            self.save_records()
+            self.record_service.delete_record(record["id"])
+            self.records = self.record_service.list_records()
             self.refresh_display()
             self.page.pop_dialog()
             self.show_success("记录已删除")
