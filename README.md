@@ -2,6 +2,8 @@
 
 简单易用的家纺销售记账工具，专为四件套销售设计。
 
+> 当前产品主线为 **Flet 版**（`accounting_flet.py`）；`accounting_gui.py` 进入 **legacy 维护态**，仅保留兼容与过渡用途。
+
 ## 功能特点
 
 - ✅ **多商品录入** - 一次录入多个不同单价的商品
@@ -14,14 +16,20 @@
 
 ## 安装使用
 
-### 方式一：直接运行Python脚本
+### 方式一：直接运行 Python 脚本（推荐 Flet 版）
 
 ```bash
-# 需要Python 3.6+
+# 需要 Python 3.10+ 且已安装 Flet 依赖
+python accounting_flet.py
+```
+
+### 方式二：运行 legacy Tk 版（仅维护，不再作为主线功能入口）
+
+```bash
 python accounting_gui.py
 ```
 
-### 方式二：下载打包版本
+### 方式三：下载打包版本
 
 从 [Releases](https://github.com/andyyuzy-76/textile-accounting/releases) 下载最新版本的exe文件。
 
@@ -65,6 +73,19 @@ python accounting_gui.py
 - 所有设置自动保存到 `printer_settings.json`
 - 设置将在下次启动时自动加载
 - 数据目录：`C:\Users\用户名\.accounting-tool\`
+
+## 验证与回归
+
+当前仓库已经提供可自动执行的基础验证路径：
+
+```bash
+python -m pytest tests/app_core tests/smoke -q
+python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_excel.py
+```
+
+- `tests/app_core`：共享存储、记录服务、导入解析、打印设置
+- `tests/smoke`：Flet 入口烟雾测试
+- `test_flet.py`：仅保留为手工调试入口，不再参与阻塞式自动测试
 
 ## 数据存储
 

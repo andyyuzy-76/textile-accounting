@@ -5,6 +5,11 @@
 功能：图形化界面实时记账
 作者：AI Assistant
 日期：2026-02-06
+
+Legacy notice:
+- Tk 版本已进入维护态，仅用于兼容与过渡
+- 新功能优先进入 Flet 主客户端
+- 允许接入共享服务层，但不再扩展独立业务分支
 """
 
 import tkinter as tk
@@ -42,6 +47,9 @@ except ImportError:
 VERSION = "1.14.0"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+LEGACY_TK_NOTICE = "Tk 客户端已进入维护态，请优先在 Flet 主客户端中继续开发。"
+
 
 class AccountingApp:
     # 深蓝色系配色方案
