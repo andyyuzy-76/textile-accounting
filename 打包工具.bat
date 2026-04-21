@@ -1,12 +1,12 @@
 @echo off
 chcp 65001 >nul
 echo ===========================================
-echo   家纺记账系统 - 打包工具
+echo   家纺记账系统 - Flet 主线打包工具
 echo ===========================================
 echo.
-echo 正在安装 PyInstaller...
+echo 正在安装 Flet 打包依赖...
 echo.
-pip install pyinstaller -q
+pip install flet -q
 echo.
 echo ===========================================
 echo   开始打包...
@@ -17,19 +17,15 @@ cd /d %~dp0
 echo 正在清理旧文件...
 if exist "dist" rmdir /s /q dist 2>nul
 if exist "build" rmdir /s /q build 2>nul
-del /q *.spec 2>nul
 
 echo.
 echo 正在打包，请稍候...
 echo.
 
-pyinstaller --onefile ^
+flet pack accounting_flet.py ^
     --name "家纺记账系统" ^
     --icon "icon.ico" ^
-    --add-data "使用说明-GUI.md;." ^
-    --windowed ^
-    --clean ^
-    accounting_gui.py
+    --add-data "receipt_printer.py;."
 
 echo.
 if exist "dist\家纺记账系统.exe" (
@@ -48,7 +44,7 @@ if exist "dist\家纺记账系统.exe" (
     echo ===========================================
     echo.
     echo 请检查错误信息，或手动运行:
-    echo   pyinstaller --onefile --name "家纺记账系统" --windowed accounting_gui.py
+    echo   flet pack accounting_flet.py --name "家纺记账系统"
     echo.
 )
 
