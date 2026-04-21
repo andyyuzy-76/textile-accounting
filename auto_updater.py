@@ -79,6 +79,7 @@ def download_file(filename, dest_path):
     """从GitHub下载文件"""
     url = f"{GITHUB_RAW_URL}/{filename}"
     try:
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         req = urllib.request.Request(
             url,
             headers={
@@ -106,11 +107,20 @@ def perform_update(callback=None):
 
         # 需要更新的文件列表
         files_to_update = [
+            "accounting.py",
             "accounting_flet.py",
             "auto_updater.py",
             "version.json",
             "build_flet.bat",
             "receipt_printer.py",
+            "import_excel.py",
+            "app_core/__init__.py",
+            "app_core/paths.py",
+            "app_core/storage.py",
+            "app_core/services/__init__.py",
+            "app_core/services/records.py",
+            "app_core/services/importers.py",
+            "app_core/services/printer_settings.py",
         ]
 
         # 创建临时目录
@@ -132,12 +142,18 @@ def perform_update(callback=None):
         # 备份当前文件
         for filename in files_to_update:
             if os.path.exists(filename):
+                os.makedirs(
+                    os.path.dirname(os.path.join(backup_dir, filename)), exist_ok=True
+                )
                 shutil.copy2(filename, os.path.join(backup_dir, filename))
 
         # 替换文件
         for filename in files_to_update:
             src = os.path.join(temp_dir, filename)
             if os.path.exists(src):
+                os.makedirs(
+                    os.path.dirname(filename), exist_ok=True
+                ) if os.path.dirname(filename) else None
                 shutil.copy2(src, filename)
 
         # 清理临时文件
@@ -152,13 +168,26 @@ def perform_update(callback=None):
         # 恢复备份
         if backup_dir and os.path.exists(backup_dir):
             for filename in [
+                "accounting.py",
                 "accounting_flet.py",
+                "auto_updater.py",
                 "version.json",
                 "build_flet.bat",
                 "receipt_printer.py",
+                "import_excel.py",
+                "app_core/__init__.py",
+                "app_core/paths.py",
+                "app_core/storage.py",
+                "app_core/services/__init__.py",
+                "app_core/services/records.py",
+                "app_core/services/importers.py",
+                "app_core/services/printer_settings.py",
             ]:
                 backup_file = os.path.join(backup_dir, filename)
                 if os.path.exists(backup_file):
+                    os.makedirs(
+                        os.path.dirname(filename), exist_ok=True
+                    ) if os.path.dirname(filename) else None
                     shutil.copy2(backup_file, filename)
         # 清理
         if temp_dir and os.path.exists(temp_dir):
