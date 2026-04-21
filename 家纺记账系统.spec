@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['accounting_gui.py'],
+    ['accounting_flet.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('receipt_printer.py', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version='C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\84feb3e7-1312-45f3-b1a4-639a848dfce0',
 )
