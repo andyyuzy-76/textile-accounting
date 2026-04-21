@@ -1,4 +1,6 @@
-# 🏠 家纺四件套记账系统 - 图形界面版
+# 🏠 家纺四件套记账系统 - Legacy Tk 版说明
+
+> 本文档仅保留给旧版 Tk 客户端参考。当前主线客户端已切换到 `accounting_flet.py`。
 
 ## ✨ 功能特点
 
@@ -12,9 +14,11 @@
 
 ### 运行程序
 
-双击运行：`记账系统-GUI.bat`
+当前主线请优先运行：`python accounting_flet.py`
 
-或命令行：
+如需兼容旧版 Tk，再运行：`记账系统-GUI.bat`
+
+如需继续使用 legacy Tk，命令行：
 ```bash
 cd %USERPROFILE%\.accounting-tool
 python accounting_gui.py
@@ -166,7 +170,7 @@ pip install openpyxl
 ## 🔧 常见问题
 
 ### Q: 程序打不开
-A: 确保已安装 Python 3.7+，双击 `记账系统-GUI.bat` 运行
+A: 当前主线请先尝试 `python accounting_flet.py`；如确需旧版 Tk，再双击 `记账系统-GUI.bat`
 
 ### Q: 如何修改已录入的记录
 A: 右键点击记录选择"删除"，然后重新录入
