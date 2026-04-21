@@ -2,7 +2,7 @@
     "version": "1.15.1",
     "release_date": "2026-04-21",
     "message": "打包版更新通道升级：支持通过 GitHub Releases 直接更新软件",
-    "exe_asset_name": "家纺记账系统-苹果风格.exe",
+    "exe_asset_name": "TextileAccounting_v1.15.1.exe",
     "changes": [
         "打包 exe 版优先通过 GitHub Releases 下载新软件包",
         "保留源码运行模式的文件级更新作为兼容兜底",
