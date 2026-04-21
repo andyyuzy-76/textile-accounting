@@ -1817,34 +1817,39 @@ class AccountingApp:
         self.page.update()
 
 
-def main(page: ft.Page):
-    # Set window size and title
+def configure_page(page: ft.Page):
     page.title = "家纺记账系统"
     page.window.width = 1400
     page.window.height = 900
-    
+
     try:
         page.window.maximized = True
     except Exception:
         pass
-    
-    # Initialize app
+
+
+def create_app(page: ft.Page) -> AccountingApp:
+    return AccountingApp(page)
+
+
+def main(page: ft.Page):
+    configure_page(page)
+
     try:
-        app = AccountingApp(page)
+        app = create_app(page)
     except Exception as e:
         print(f"[ERROR] AccountingApp init failed: {e}")
         import traceback
         traceback.print_exc()
         return
-    
+
     try:
         app.refresh_display()
     except Exception as e:
         print(f"[ERROR] refresh_display failed: {e}")
         import traceback
         traceback.print_exc()
-    
-    
+
     try:
         page.update()
     except Exception as e:
