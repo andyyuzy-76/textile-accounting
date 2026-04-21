@@ -19,7 +19,8 @@ DATE_FORMATS = [
 DATE_KEYWORDS = ["日期", "date", "时间", "time"]
 QUANTITY_KEYWORDS = ["数量", "quantity", "套数", "件数", "套", "qty"]
 PRICE_KEYWORDS = ["单价", "price", "unit", "价格", "unit_price", "单价(元)"]
-NOTE_KEYWORDS = ["备注", "note", "说明", "描述", "notes", "客户"]
+NOTE_KEYWORDS = ["备注", "note", "说明", "描述", "notes"]
+CUSTOMER_KEYWORDS = ["客户", "customer", "客户名", "customer_name"]
 TYPE_KEYWORDS = ["类型", "type"]
 TOTAL_KEYWORDS = ["总金额", "total", "金额", "总价", "合计", "total_amount"]
 
@@ -56,7 +57,14 @@ def parse_number(value: Any) -> float:
         return 0.0
     if isinstance(value, (int, float)):
         return float(value)
-    cleaned = str(value).replace("¥", "").replace("元", "").replace(",", "").replace(" ", "").strip()
+    cleaned = (
+        str(value)
+        .replace("¥", "")
+        .replace("元", "")
+        .replace(",", "")
+        .replace(" ", "")
+        .strip()
+    )
     if not cleaned:
         return 0.0
     try:
@@ -69,13 +77,21 @@ def detect_columns(headers: Sequence[str]) -> dict[str, int]:
     lowered = [str(header).lower().strip() for header in headers]
     mapping: dict[str, int] = {}
     for idx, header in enumerate(lowered):
-        if "date" not in mapping and any(keyword in header for keyword in DATE_KEYWORDS):
+        if "date" not in mapping and any(
+            keyword in header for keyword in DATE_KEYWORDS
+        ):
             mapping["date"] = idx
-        if "quantity" not in mapping and any(keyword in header for keyword in QUANTITY_KEYWORDS):
+        if "quantity" not in mapping and any(
+            keyword in header for keyword in QUANTITY_KEYWORDS
+        ):
             mapping["quantity"] = idx
-        if "unit_price" not in mapping and any(keyword in header for keyword in PRICE_KEYWORDS):
+        if "unit_price" not in mapping and any(
+            keyword in header for keyword in PRICE_KEYWORDS
+        ):
             mapping["unit_price"] = idx
-        if "note" not in mapping and any(keyword in header for keyword in NOTE_KEYWORDS):
+        if "note" not in mapping and any(
+            keyword in header for keyword in NOTE_KEYWORDS
+        ):
             mapping["note"] = idx
     return mapping
 
@@ -87,7 +103,9 @@ def detect_named_columns(columns: Sequence[Any]) -> dict[str, str]:
 
 
 def normalize_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    data = {str(key).strip().lower(): value for key, value in row.items() if key is not None}
+    data = {
+        str(key).strip().lower(): value for key, value in row.items() if key is not None
+    }
 
     def pick(keywords: Sequence[str]) -> Any:
         for key, value in data.items():
@@ -99,6 +117,8 @@ def normalize_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     quantity = parse_number(pick(QUANTITY_KEYWORDS))
     unit_price = parse_number(pick(PRICE_KEYWORDS))
     total_amount = parse_number(pick(TOTAL_KEYWORDS))
+    customer_value = pick(CUSTOMER_KEYWORDS)
+    customer = str(customer_value).strip() if customer_value not in (None, "") else ""
     note_value = pick(NOTE_KEYWORDS)
     note = str(note_value).strip() if note_value not in (None, "") else ""
     type_value = pick(TYPE_KEYWORDS)
@@ -118,20 +138,36 @@ def normalize_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
         "date": date,
         "quantity": int(abs(quantity)),
         "unit_price": float(unit_price),
+        "customer": customer,
         "note": note,
         "record_type": record_type,
     }
 
 
-def build_record(*, record_id: int, date: str, quantity: int, unit_price: float, note: str = "", record_type: str = "sale") -> dict[str, Any]:
+def build_record(
+    *,
+    record_id: int,
+    date: str,
+    quantity: int,
+    unit_price: float,
+    customer: str = "",
+    note: str = "",
+    record_type: str = "sale",
+) -> dict[str, Any]:
     signed_quantity = -quantity if record_type == "return" else quantity
     signed_total = signed_quantity * unit_price
     normalized_note = note.strip()
     if record_type == "return":
-        normalized_note = f"[退货] {normalized_note}".strip() if normalized_note else "[退货]"
+        if normalized_note.startswith("[退货]"):
+            normalized_note = normalized_note
+        else:
+            normalized_note = (
+                f"[退货] {normalized_note}".strip() if normalized_note else "[退货]"
+            )
     return {
         "id": record_id,
         "date": date,
+        "customer": customer.strip(),
         "quantity": signed_quantity,
         "unit_price": float(unit_price),
         "total_amount": signed_total,
@@ -142,7 +178,9 @@ def build_record(*, record_id: int, date: str, quantity: int, unit_price: float,
     }
 
 
-def import_csv_records(file_path: str | Path, starting_id: int = 1) -> list[dict[str, Any]]:
+def import_csv_records(
+    file_path: str | Path, starting_id: int = 1
+) -> list[dict[str, Any]]:
     path = Path(file_path)
     encodings = ["utf-8-sig", "utf-8", "gbk", "gb2312"]
     last_error: Exception | None = None
@@ -162,6 +200,7 @@ def import_csv_records(file_path: str | Path, starting_id: int = 1) -> list[dict
                             date=normalized["date"],
                             quantity=normalized["quantity"],
                             unit_price=normalized["unit_price"],
+                            customer=normalized.get("customer", ""),
                             note=normalized["note"],
                             record_type=normalized["record_type"],
                         )
