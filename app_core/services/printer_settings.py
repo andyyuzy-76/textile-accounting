@@ -15,6 +15,7 @@ DEFAULT_PRINTER_SETTINGS: dict[str, Any] = {
     "auto_print": False,
     "paper_width": 58,
     "compact_mode": True,
+    "customers": [],
 }
 
 
@@ -32,10 +33,14 @@ class PrinterSettingsStore:
         merged = self.load()
         merged.update(settings)
         self.store.file_path.parent.mkdir(parents=True, exist_ok=True)
-        self.store.file_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.store.file_path.write_text(
+            json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return merged
 
-    def apply_to_printer(self, printer: Any, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    def apply_to_printer(
+        self, printer: Any, settings: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         current = settings or self.load()
         printer.set_shop_info(
             name=current["shop_name"],

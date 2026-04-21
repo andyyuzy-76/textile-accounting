@@ -20,6 +20,7 @@ def test_printer_settings_store_returns_defaults_when_missing(tmp_path):
     settings = store.load()
     assert settings["paper_width"] == 58
     assert settings["auto_print"] is False
+    assert settings["customers"] == []
 
 
 def test_printer_settings_store_saves_and_applies_to_printer(tmp_path):
@@ -31,3 +32,12 @@ def test_printer_settings_store_saves_and_applies_to_printer(tmp_path):
 
     assert printer.shop_name == "A店"
     assert printer.receipt_width == 44
+
+
+def test_printer_settings_store_persists_customer_list(tmp_path):
+    store = PrinterSettingsStore(tmp_path / "printer_settings.json")
+
+    store.save({"customers": ["张女士", "李老板"]})
+    settings = store.load()
+
+    assert settings["customers"] == ["张女士", "李老板"]
