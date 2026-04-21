@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import json
 import os
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import csv
@@ -24,6 +25,7 @@ import time
 
 # 导入打印模块
 from receipt_printer import ReceiptPrinter, get_printer_list
+from app_core.services.printer_settings import PrinterSettingsStore
 
 # 导入自动更新模块
 try:
@@ -79,6 +81,7 @@ class AccountingApp:
         self.data_dir = os.path.join(home_dir, ".accounting-tool")
         self.data_file = os.path.join(self.data_dir, "records.json")
         os.makedirs(self.data_dir, exist_ok=True)
+        self.printer_settings_store = PrinterSettingsStore(Path(self.data_dir) / "printer_settings.json")
         
         # 加载数据
         self.records = self.load_records()
@@ -147,44 +150,14 @@ class AccountingApp:
 
     def load_printer_settings(self):
         """加载打印机设置"""
-        settings_file = os.path.join(self.data_dir, "printer_settings.json")
-        self.printer_settings = {
-            'shop_name': '家纺四件套',
-            'shop_address': '',
-            'shop_phone': '',
-            'footer_text': '谢谢惠顾，欢迎下次光临！',
-            'printer_name': '',  # 空字符串表示使用默认打印机
-            'auto_print': False,  # 是否自动打印
-            'paper_width': 58,  # 纸张宽度：58mm或80mm
-            'compact_mode': True  # 紧凑模式：一张纸打印（推荐58mm）
-        }
-
-        if os.path.exists(settings_file):
-            try:
-                with open(settings_file, 'r', encoding='utf-8') as f:
-                    loaded_settings = json.load(f)
-                    self.printer_settings.update(loaded_settings)
-
-                    # 应用到打印机
-                    self.receipt_printer.set_shop_info(
-                        name=self.printer_settings['shop_name'],
-                        address=self.printer_settings['shop_address'],
-                        phone=self.printer_settings['shop_phone']
-                    )
-                    self.receipt_printer.footer_text = self.printer_settings['footer_text']
-                    self.receipt_printer.receipt_width = 32 if self.printer_settings['paper_width'] == 58 else (44 if self.printer_settings['paper_width'] == 76 else 48)
-            except:
-                pass
+        self.printer_settings = self.printer_settings_store.load()
+        self.printer_settings_store.apply_to_printer(self.receipt_printer, self.printer_settings)
 
     def save_printer_settings(self, settings):
         """保存打印机设置"""
-        settings_file = os.path.join(self.data_dir, "printer_settings.json")
         try:
-            # 更新内存中的设置
-            self.printer_settings.update(settings)
-
-            with open(settings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.printer_settings, f, ensure_ascii=False, indent=2)
+            self.printer_settings = self.printer_settings_store.save(settings)
+            self.printer_settings_store.apply_to_printer(self.receipt_printer, self.printer_settings)
         except Exception as e:
             messagebox.showerror("错误", f"保存设置失败: {str(e)}")
     

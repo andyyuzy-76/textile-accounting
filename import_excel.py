@@ -12,112 +12,27 @@ import sys
 from datetime import datetime, timedelta
 from typing import List, Dict
 
+from app_core.services.importers import detect_named_columns
+from app_core.services.importers import parse_date as shared_parse_date
+from app_core.services.importers import parse_number as shared_parse_number
+
 def detect_columns(df: pd.DataFrame) -> Dict[str, str]:
-    """
-    自动识别列名
-    返回列名映射关系
-    """
-    column_mapping = {}
-    
-    # 可能的列名变体
-    date_patterns = ['日期', 'date', '时间', 'Date', 'TIME', 'Date']
-    quantity_patterns = ['数量', 'quantity', '套数', '件数', 'Quantity', 'qty', 'Qty', '套']
-    price_patterns = ['单价', 'price', 'unit_price', 'Price', '单价(元)', '价格']
-    note_patterns = ['备注', 'note', '说明', '描述', 'Note', 'notes', 'Notes', '客户']
-    total_patterns = ['总金额', 'total', '金额', 'Total', '总价', '合计', 'total_amount']
-    
-    columns_lower = [str(col).lower() for col in df.columns]
-    original_columns = list(df.columns)
-    
-    for i, col_lower in enumerate(columns_lower):
-        original_col = original_columns[i]
-        
-        # 检测日期列
-        if any(pattern.lower() in col_lower for pattern in date_patterns):
-            column_mapping['date'] = original_col
-        
-        # 检测数量列
-        elif any(pattern.lower() in col_lower for pattern in quantity_patterns):
-            column_mapping['quantity'] = original_col
-        
-        # 检测单价列
-        elif any(pattern.lower() in col_lower for pattern in price_patterns):
-            column_mapping['unit_price'] = original_col
-        
-        # 检测备注列
-        elif any(pattern.lower() in col_lower for pattern in note_patterns):
-            column_mapping['note'] = original_col
-        
-        # 检测总金额列（可选，用于验证）
-        elif any(pattern.lower() in col_lower for pattern in total_patterns):
-            column_mapping['total'] = original_col
-    
-    return column_mapping
+    """自动识别列名"""
+    return detect_named_columns(df.columns)
 
 
 def parse_date(date_value) -> str:
     """解析各种日期格式"""
     if pd.isna(date_value):
         return None
-    
-    # 如果已经是字符串格式
-    if isinstance(date_value, str):
-        # 尝试多种日期格式
-        date_formats = [
-            "%Y-%m-%d",
-            "%Y/%m/%d",
-            "%d/%m/%Y",
-            "%d-%m-%Y",
-            "%m/%d/%Y",
-            "%Y年%m月%d日",
-            "%Y.%m.%d",
-            "%d.%m.%Y"
-        ]
-        
-        for fmt in date_formats:
-            try:
-                parsed = datetime.strptime(date_value.strip(), fmt)
-                return parsed.strftime("%Y-%m-%d")
-            except:
-                continue
-        
-        # 如果是 Excel 序列号格式（如 44500）
-        try:
-            # Excel 日期序列号转换
-            excel_date = int(float(date_value))
-            parsed = datetime(1899, 12, 30) + timedelta(days=excel_date)
-            return parsed.strftime("%Y-%m-%d")
-        except:
-            pass
-    
-    # 如果是 pandas Timestamp
-    if isinstance(date_value, pd.Timestamp):
-        return date_value.strftime("%Y-%m-%d")
-    
-    # 如果是 datetime 对象
-    if isinstance(date_value, datetime):
-        return date_value.strftime("%Y-%m-%d")
-    
-    return None
+    return shared_parse_date(date_value)
 
 
 def parse_number(value) -> float:
     """解析数字，处理各种格式"""
     if pd.isna(value):
         return 0.0
-    
-    if isinstance(value, (int, float)):
-        return float(value)
-    
-    if isinstance(value, str):
-        # 移除可能的货币符号和逗号
-        cleaned = value.replace('¥', '').replace('元', '').replace(',', '').replace(' ', '').strip()
-        try:
-            return float(cleaned)
-        except:
-            return 0.0
-    
-    return 0.0
+    return shared_parse_number(value)
 
 
 def import_from_excel(excel_file: str, accounting_tool=None) -> Dict:

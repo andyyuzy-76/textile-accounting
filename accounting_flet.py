@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 from app_core.paths import get_data_dir, get_records_file
+from app_core.services.importers import import_csv_records
+from app_core.services.printer_settings import PrinterSettingsStore
 from app_core.services.records import RecordService
 from app_core.storage import JsonStore
 
@@ -57,6 +59,7 @@ class AccountingApp:
         self.data_file = str(get_records_file())
         os.makedirs(self.data_dir, exist_ok=True)
         self.record_service = RecordService(JsonStore(Path(self.data_file)))
+        self.printer_settings_store = PrinterSettingsStore(Path(self.data_dir) / "printer_settings.json")
         self.records = self.load_records()
         self.item_rows = []
         self.receipt_printer = ReceiptPrinter() if PRINT_AVAILABLE and ReceiptPrinter else None
@@ -89,36 +92,8 @@ class AccountingApp:
         if not PRINT_AVAILABLE or not self.receipt_printer:
             return
 
-        settings_file = os.path.join(self.data_dir, "printer_settings.json")
-        default_settings = {
-            "shop_name": "家纺四件套",
-            "shop_address": "",
-            "shop_phone": "",
-            "footer_text": "谢谢惠顾，欢迎下次光临！",
-            "printer_name": "",
-            "auto_print": False,
-            "paper_width": 58,
-            "compact_mode": True,
-        }
-
-        if os.path.exists(settings_file):
-            try:
-                with open(settings_file, "r", encoding="utf-8") as f:
-                    loaded_settings = json.load(f)
-                    default_settings.update(loaded_settings)
-            except:
-                pass
-
-        # 应用到打印机
-        self.receipt_printer.set_shop_info(
-            name=default_settings["shop_name"],
-            address=default_settings["shop_address"],
-            phone=default_settings["shop_phone"],
-        )
-        self.receipt_printer.footer_text = default_settings["footer_text"]
-        self.receipt_printer.receipt_width = (
-            32 if default_settings["paper_width"] == 58 else 48
-        )
+        settings = self.printer_settings_store.load()
+        self.printer_settings_store.apply_to_printer(self.receipt_printer, settings)
 
     def print_receipt(self, record):
         """打印小票"""
@@ -187,64 +162,22 @@ class AccountingApp:
 
             try:
                 filepath = e.files[0].path
-                imported_count = 0
+                starting_id = max([r["id"] for r in self.records], default=0) + 1
+                imported_records = import_csv_records(filepath, starting_id=starting_id)
 
-                with open(filepath, "r", encoding="utf-8-sig") as f:
-                    reader = csv.DictReader(f)
-
-                    # 获取当前最大ID
-                    max_id = max([r["id"] for r in self.records], default=0)
-
-                    for row in reader:
-                        # 跳过表头或空行
-                        if not row.get("日期"):
-                            continue
-
-                        # 解析数据
-                        record_type = "return" if row.get("类型") == "退货" else "sale"
-                        quantity = int(row.get("数量", 0))
-                        total_amount = float(row.get("总金额", 0))
-
-                        # 计算平均单价
-                        avg_price = (
-                            abs(total_amount) / abs(quantity) if quantity != 0 else 0
-                        )
-
-                        # 创建记录
-                        max_id += 1
-                        record = {
-                            "id": max_id,
-                            "date": row.get("日期", ""),
-                            "quantity": quantity,
-                            "unit_price": avg_price,
-                            "total_amount": total_amount,
-                            "note": row.get("备注", ""),
-                            "type": record_type,
-                            "items": [
-                                {"quantity": abs(quantity), "unit_price": avg_price}
-                            ],
-                            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        }
-
-                        self.records.append(record)
-                        imported_count += 1
-
-                if imported_count > 0:
+                if imported_records:
+                    self.records.extend(imported_records)
                     self.save_records()
                     self.refresh_display()
-                    self.show_success(f"成功导入 {imported_count} 条记录")
+                    self.show_success(f"成功导入 {len(imported_records)} 条记录")
                 else:
                     self.show_error("未找到有效记录")
-
             except Exception as ex:
                 self.show_error(f"导入失败: {str(ex)}")
 
-        # 创建文件选择器
         file_picker = ft.FilePicker(on_result=on_file_result)
         self.page.overlay.append(file_picker)
         self.page.update()
-
-        # 打开文件选择对话框
         file_picker.pick_files(
             allowed_extensions=["csv"],
             dialog_title="选择CSV文件",
