@@ -12,96 +12,24 @@ import sys
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
+from app_core.services.importers import detect_columns as shared_detect_columns
+from app_core.services.importers import parse_date as shared_parse_date
+from app_core.services.importers import parse_number as shared_parse_number
+
 
 def parse_date(date_str: str) -> Optional[str]:
     """解析各种日期格式"""
-    if not date_str or not date_str.strip():
-        return None
-    
-    date_str = str(date_str).strip()
-    
-    # 尝试多种日期格式
-    date_formats = [
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%m/%d/%Y",
-        "%Y年%m月%d日",
-        "%Y.%m.%d",
-        "%d.%m.%Y"
-    ]
-    
-    for fmt in date_formats:
-        try:
-            parsed = datetime.strptime(date_str, fmt)
-            return parsed.strftime("%Y-%m-%d")
-        except:
-            continue
-    
-    # 尝试 Excel 序列号格式（如 44500）
-    try:
-        excel_date = int(float(date_str))
-        if 1 <= excel_date <= 50000:  # Excel 日期的合理范围
-            parsed = datetime(1899, 12, 30) + timedelta(days=excel_date)
-            return parsed.strftime("%Y-%m-%d")
-    except:
-        pass
-    
-    return None
+    return shared_parse_date(date_str)
 
 
 def parse_number(value: str) -> float:
     """解析数字，处理各种格式"""
-    if not value:
-        return 0.0
-    
-    # 移除可能的货币符号和逗号
-    cleaned = str(value).replace('¥', '').replace('元', '').replace(',', '').replace(' ', '').strip()
-    
-    try:
-        return float(cleaned)
-    except:
-        return 0.0
+    return shared_parse_number(value)
 
 
 def detect_columns(headers: List[str]) -> Dict[str, int]:
-    """
-    自动识别列索引
-    返回列名到索引的映射
-    """
-    column_mapping = {}
-    headers_lower = [h.lower().strip() for h in headers]
-    
-    # 日期列
-    date_keywords = ['日期', 'date', '时间', 'time']
-    for i, h in enumerate(headers_lower):
-        if any(kw in h for kw in date_keywords):
-            column_mapping['date'] = i
-            break
-    
-    # 数量列
-    quantity_keywords = ['数量', 'quantity', '套数', '件数', '套', 'qty']
-    for i, h in enumerate(headers_lower):
-        if any(kw in h for kw in quantity_keywords):
-            column_mapping['quantity'] = i
-            break
-    
-    # 单价列
-    price_keywords = ['单价', 'price', 'unit', '价格', '单价(元)']
-    for i, h in enumerate(headers_lower):
-        if any(kw in h for kw in price_keywords):
-            column_mapping['unit_price'] = i
-            break
-    
-    # 备注列
-    note_keywords = ['备注', 'note', '说明', '描述', 'notes', '客户']
-    for i, h in enumerate(headers_lower):
-        if any(kw in h for kw in note_keywords):
-            column_mapping['note'] = i
-            break
-    
-    return column_mapping
+    """自动识别列索引"""
+    return shared_detect_columns(headers)
 
 
 def read_csv_file(file_path: str) -> tuple:
