@@ -17,9 +17,15 @@ from datetime import datetime
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/contents/version.json"
 GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
+GITHUB_RELEASE_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 # 本地版本文件路径
 LOCAL_VERSION_FILE = "version.json"
+
+
+def is_frozen_app():
+    """是否运行于打包 exe 环境"""
+    return bool(getattr(sys, "frozen", False))
 
 
 def get_current_version():
@@ -51,6 +57,109 @@ def get_remote_version():
     except Exception as e:
         print(f"检查更新失败: {e}")
         return None, None
+
+
+def get_remote_manifest():
+    """获取远程版本清单"""
+    try:
+        url = f"{GITHUB_RAW_URL}/version.json?t={datetime.now().timestamp()}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "TextileAccounting/1.0",
+                "Cache-Control": "no-cache",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def get_release_asset_download_url(asset_name: str):
+    """获取最新 release 中指定资产的下载地址"""
+    try:
+        req = urllib.request.Request(
+            GITHUB_RELEASE_API_URL,
+            headers={
+                "User-Agent": "TextileAccounting/1.0",
+                "Accept": "application/vnd.github+json",
+                "Cache-Control": "no-cache",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        for asset in data.get("assets", []):
+            if asset.get("name") == asset_name:
+                return asset.get("browser_download_url")
+        return None
+    except Exception as e:
+        print(f"获取 release 资产失败: {e}")
+        return None
+
+
+def download_url(url, dest_path):
+    """下载任意 URL 到目标文件"""
+    try:
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "TextileAccounting/1.0",
+                "Cache-Control": "no-cache",
+                "Accept": "application/octet-stream",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=120) as response:
+            with open(dest_path, "wb") as f:
+                f.write(response.read())
+        return True
+    except Exception as e:
+        print(f"下载 {url} 失败: {e}")
+        return False
+
+
+def perform_binary_update(callback=None):
+    """打包版 exe 自更新"""
+    manifest = get_remote_manifest()
+    if not manifest:
+        return False, "无法获取远程版本信息"
+
+    asset_name = manifest.get("exe_asset_name", "家纺记账系统-苹果风格.exe")
+    asset_url = get_release_asset_download_url(asset_name)
+    if not asset_url:
+        return False, f"未找到发布资产: {asset_name}"
+
+    current_exe = sys.executable
+    if not current_exe.lower().endswith(".exe"):
+        return False, "当前不是 exe 运行环境"
+
+    app_dir = os.path.dirname(current_exe)
+    temp_dir = tempfile.mkdtemp()
+    downloaded_exe = os.path.join(temp_dir, asset_name)
+    updater_bat = os.path.join(temp_dir, "apply_update.bat")
+
+    if callback:
+        callback("正在下载软件更新包...")
+    if not download_url(asset_url, downloaded_exe):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return False, "下载更新包失败"
+
+    script = f"""@echo off
+chcp 65001 >nul
+set EXE_PATH={current_exe}
+set NEW_EXE={downloaded_exe}
+ping 127.0.0.1 -n 3 >nul
+copy /y "%NEW_EXE%" "%EXE_PATH%" >nul
+start "" "%EXE_PATH%"
+"""
+    with open(updater_bat, "w", encoding="utf-8") as f:
+        f.write(script)
+
+    subprocess.Popen(
+        ["cmd", "/c", updater_bat], creationflags=subprocess.CREATE_NO_WINDOW
+    )
+    os._exit(0)
 
 
 def compare_versions(v1, v2):
@@ -98,6 +207,9 @@ def download_file(filename, dest_path):
 
 def perform_update(callback=None):
     """执行更新操作"""
+    if is_frozen_app():
+        return perform_binary_update(callback)
+
     backup_dir = None
     temp_dir = None
 
