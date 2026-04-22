@@ -328,14 +328,25 @@ def test_show_selected_date_records_filters_exact_date():
         accounting_flet.ft.TextField,
         cast(object, type("Field", (), {"value": "2026-04-21"})()),
     )
+    app.records_scope_text = cast(
+        accounting_flet.ft.Text,
+        cast(object, type("Label", (), {"value": ""})()),
+    )
+    app.record_filter_buttons = {}
 
     captured = {}
-    app.display_records = lambda records: captured.setdefault("records", records)
+    app.display_records = (
+        lambda records, empty_message=None, presorted=False: captured.setdefault(
+            "payload",
+            (records, empty_message, presorted),
+        )
+    )
     app.show_error = lambda message: captured.setdefault("error", message)
 
     accounting_flet.AccountingApp.show_selected_date_records(app)
 
-    assert captured["records"] == [{"date": "2026-04-21", "id": 1}]
+    assert captured["payload"][0] == [{"date": "2026-04-21", "id": 1}]
+    assert captured["payload"][2] is True
 
 
 def test_show_month_records_updates_scope_text_and_filters_current_month(
@@ -358,18 +369,20 @@ def test_show_month_records_updates_scope_text_and_filters_current_month(
         accounting_flet.ft.Text,
         cast(object, type("Label", (), {"value": ""})()),
     )
+    app.record_filter_buttons = {}
 
     captured = {}
-    app.display_records = lambda records, empty_message=None: captured.setdefault(
-        "records", records
+    app.display_records = lambda records, empty_message=None, presorted=False: captured.setdefault(
+        "payload", (records, empty_message, presorted)
     )
 
     accounting_flet.AccountingApp.show_month_records(app)
 
-    assert captured["records"] == [
+    assert captured["payload"][0] == [
         {"date": "2026-04-21", "id": 1},
         {"date": "2026-04-01", "id": 2},
     ]
+    assert captured["payload"][2] is True
     assert "本月" in app.records_scope_text.value
     assert "2 条" in app.records_scope_text.value
 
@@ -392,20 +405,61 @@ def test_show_year_records_updates_scope_text_and_filters_current_year(monkeypat
         accounting_flet.ft.Text,
         cast(object, type("Label", (), {"value": ""})()),
     )
+    app.record_filter_buttons = {}
 
     captured = {}
-    app.display_records = lambda records, empty_message=None: captured.setdefault(
-        "records", records
+    app.display_records = lambda records, empty_message=None, presorted=False: captured.setdefault(
+        "payload", (records, empty_message, presorted)
     )
 
     accounting_flet.AccountingApp.show_year_records(app)
 
-    assert captured["records"] == [
+    assert captured["payload"][0] == [
         {"date": "2026-04-21", "id": 1},
         {"date": "2026-01-15", "id": 2},
     ]
+    assert captured["payload"][2] is True
     assert "本年" in app.records_scope_text.value
     assert "2 条" in app.records_scope_text.value
+
+
+def test_build_record_indexes_prepares_sorted_date_month_year_views():
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.records = [
+        {
+            "id": 1,
+            "date": "2026-04-21",
+            "created_at": "2026-04-21 10:00:00",
+            "total_amount": 100.0,
+        },
+        {
+            "id": 2,
+            "date": "2026-04-21",
+            "created_at": "2026-04-21 10:05:00",
+            "total_amount": 200.0,
+        },
+        {
+            "id": 3,
+            "date": "2026-05-01",
+            "created_at": "2026-05-01 09:00:00",
+            "total_amount": 300.0,
+        },
+        {
+            "id": 4,
+            "date": "2025-12-31",
+            "created_at": "2025-12-31 23:00:00",
+            "total_amount": 400.0,
+        },
+    ]
+
+    accounting_flet.AccountingApp.build_record_indexes(app)
+
+    assert [record["id"] for record in app._sorted_records_cache] == [3, 2, 1, 4]
+    assert [record["id"] for record in app._records_by_date["2026-04-21"]] == [2, 1]
+    assert [record["id"] for record in app._records_by_month["2026-04"]] == [2, 1]
+    assert [record["id"] for record in app._records_by_year["2026"]] == [3, 2, 1]
+    assert app._record_indexes_ready is True
+    assert app._record_indexes_dirty is False
 
 
 def test_display_records_shows_empty_state_when_no_records():

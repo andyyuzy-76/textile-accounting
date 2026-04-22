@@ -57,7 +57,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.6"
+VERSION = "1.15.7"
 
 
 class AccountingApp:
@@ -131,6 +131,12 @@ class AccountingApp:
         self.record_filter_buttons: dict[str, ft.TextButton] = {}
         self.printer_settings: dict[str, Any] = self.printer_settings_store.load()
         self.records = self.load_records()
+        self._sorted_records_cache: list[dict[str, Any]] = []
+        self._records_by_date: dict[str, list[dict[str, Any]]] = {}
+        self._records_by_month: dict[str, list[dict[str, Any]]] = {}
+        self._records_by_year: dict[str, list[dict[str, Any]]] = {}
+        self._record_indexes_ready = False
+        self._record_indexes_dirty = True
         self.item_rows: list[dict[str, Any]] = []
         self._ctrl_enter_submit_pending = False
         self.receipt_printer = (
@@ -149,14 +155,21 @@ class AccountingApp:
 
             traceback.print_exc()
 
+        try:
+            self.page.run_task(self.prewarm_record_indexes)
+        except Exception:
+            pass
+
     def load_records(self) -> list[dict[str, Any]]:
         """加载历史记录"""
         self.records = self.record_service.reload()
+        self.mark_record_indexes_dirty()
         return self.records
 
     def save_records(self):
         """保存记录"""
         self.records = self.record_service.replace_records(self.records)
+        self.mark_record_indexes_dirty()
 
     def load_printer_settings(self):
         """加载打印机设置"""
@@ -181,6 +194,55 @@ class AccountingApp:
         if e.key == "Enter" and e.ctrl:
             self._ctrl_enter_submit_pending = True
             self.add_record()
+
+    def mark_record_indexes_dirty(self):
+        """标记记录索引需要重建"""
+        self._record_indexes_dirty = True
+        self._record_indexes_ready = False
+
+    def build_record_indexes(self):
+        """构建按日期/月/年的记录索引，并缓存排序结果"""
+        sorted_records = sorted(
+            self.records,
+            key=self.get_record_sort_key,
+            reverse=True,
+        )
+
+        records_by_date: dict[str, list[dict[str, Any]]] = {}
+        records_by_month: dict[str, list[dict[str, Any]]] = {}
+        records_by_year: dict[str, list[dict[str, Any]]] = {}
+
+        for record in sorted_records:
+            date_text = self.get_record_date_text(record)
+            month_text = date_text[:7]
+            year_text = date_text[:4]
+
+            if date_text:
+                records_by_date.setdefault(date_text, []).append(record)
+            if len(month_text) == 7:
+                records_by_month.setdefault(month_text, []).append(record)
+            if len(year_text) == 4:
+                records_by_year.setdefault(year_text, []).append(record)
+
+        self._sorted_records_cache = sorted_records
+        self._records_by_date = records_by_date
+        self._records_by_month = records_by_month
+        self._records_by_year = records_by_year
+        self._record_indexes_dirty = False
+        self._record_indexes_ready = True
+
+    async def prewarm_record_indexes(self):
+        """后台预热记录索引，避免首次筛选时阻塞"""
+        await asyncio.sleep(0)
+        await asyncio.to_thread(self.build_record_indexes)
+
+    def ensure_record_indexes_ready(self):
+        """确保记录索引已就绪，必要时同步构建"""
+        if getattr(self, "_record_indexes_ready", False) and not getattr(
+            self, "_record_indexes_dirty", True
+        ):
+            return
+        self.build_record_indexes()
 
     def should_skip_price_submit_after_ctrl_enter(self) -> bool:
         """避免 Ctrl+Enter 提交后，价格输入框的回车事件再次补空行"""
@@ -1446,6 +1508,7 @@ class AccountingApp:
                 record_type="mixed",
             )
             self.records = self.record_service.list_records()
+            self.mark_record_indexes_dirty()
 
             self.refresh_display()
             self.clear_form()
@@ -1522,13 +1585,17 @@ class AccountingApp:
         detail: str,
         records: list[dict[str, Any]],
         empty_message: str,
+        presorted: bool = False,
     ):
         """按指定范围展示记录，并同步界面反馈"""
         self.update_records_scope(scope_key, detail, len(records))
         try:
-            self.display_records(records, empty_message)
+            self.display_records(records, empty_message, presorted)
         except TypeError:
-            self.display_records(records)
+            try:
+                self.display_records(records, empty_message)
+            except TypeError:
+                self.display_records(records)
 
     def show_today_records(self):
         """显示今日记录"""
@@ -1553,51 +1620,71 @@ class AccountingApp:
             self.show_error("日期格式错误，请使用 YYYY-MM-DD")
             return
 
-        filtered = [
-            r for r in self.records if self.get_record_date_text(r) == selected_date
-        ]
+        self.ensure_record_indexes_ready()
+        filtered = list(self._records_by_date.get(selected_date, []))
         self.show_records_for_scope(
             "date",
             selected_date,
             filtered,
             f"{selected_date} 暂无记录",
+            presorted=True,
         )
 
     def show_month_records(self):
         """显示本月记录"""
         this_month = datetime.now().strftime("%Y-%m")
-        filtered = [
-            r for r in self.records if self.get_record_date_text(r).startswith(this_month)
-        ]
-        self.show_records_for_scope("month", this_month, filtered, f"{this_month} 暂无记录")
+        self.ensure_record_indexes_ready()
+        filtered = list(self._records_by_month.get(this_month, []))
+        self.show_records_for_scope(
+            "month",
+            this_month,
+            filtered,
+            f"{this_month} 暂无记录",
+            presorted=True,
+        )
 
     def show_year_records(self):
         """显示本年记录"""
         this_year = datetime.now().strftime("%Y")
-        filtered = [
-            r for r in self.records if self.get_record_date_text(r).startswith(this_year)
-        ]
-        self.show_records_for_scope("year", this_year, filtered, f"{this_year} 暂无记录")
+        self.ensure_record_indexes_ready()
+        filtered = list(self._records_by_year.get(this_year, []))
+        self.show_records_for_scope(
+            "year",
+            this_year,
+            filtered,
+            f"{this_year} 暂无记录",
+            presorted=True,
+        )
 
     def show_all_records(self):
         """显示所有记录"""
+        self.ensure_record_indexes_ready()
         self.show_records_for_scope(
             "all",
             "",
-            self.records,
+            list(self._sorted_records_cache),
             "当前没有任何记录",
+            presorted=True,
         )
 
-    def display_records(self, records, empty_message: str = "暂无记录"):
+    def display_records(
+        self,
+        records,
+        empty_message: str = "暂无记录",
+        presorted: bool = False,
+    ):
         """显示记录列表"""
         self.records_list.controls.clear()
 
-        # 按日期排序（降序）
-        sorted_records = sorted(
-            records,
-            key=self.get_record_sort_key,
-            reverse=True,
-        )
+        if presorted:
+            sorted_records = list(records)
+        else:
+            # 按日期排序（降序）
+            sorted_records = sorted(
+                records,
+                key=self.get_record_sort_key,
+                reverse=True,
+            )
 
         total = 0.0
         if not sorted_records:
@@ -2527,6 +2614,7 @@ class AccountingApp:
                     note=note_field.value.strip(),
                 )
                 self.records = self.record_service.list_records()
+                self.mark_record_indexes_dirty()
                 self.refresh_display()
                 self.page.pop_dialog()
                 self.show_success("记录已更新")
@@ -2573,6 +2661,7 @@ class AccountingApp:
         def confirm_delete(e):
             self.record_service.delete_record(record["id"])
             self.records = self.record_service.list_records()
+            self.mark_record_indexes_dirty()
             self.refresh_display()
             self.page.pop_dialog()
             self.show_success("记录已删除")
@@ -2746,6 +2835,7 @@ class AccountingApp:
                     record_type="sale",
                 )
                 self.records = self.record_service.list_records()
+                self.mark_record_indexes_dirty()
                 updated_record = next(
                     r for r in self.records if r.get("id") == record.get("id")
                 )
@@ -3004,6 +3094,7 @@ class AccountingApp:
                     items=items_to_add,
                 )
                 self.records = self.record_service.list_records()
+                self.mark_record_indexes_dirty()
                 self.refresh_display()
                 self.maybe_auto_print(return_record)
                 self.show_success(f"已添加退货 {total_qty}套，共 -¥{total_amount:.2f}")
