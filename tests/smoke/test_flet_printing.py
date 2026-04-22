@@ -534,6 +534,35 @@ def test_display_records_puts_newer_same_day_records_on_top():
     ]
 
 
+def test_create_record_card_shows_created_time_to_minute():
+    app = object.__new__(accounting_flet.AccountingApp)
+
+    card = accounting_flet.AccountingApp.create_record_card(
+        app,
+        {
+            "id": 1,
+            "date": "2026-04-22",
+            "created_at": "2026-04-22 10:05:42",
+            "quantity": 2,
+            "unit_price": 100.0,
+            "total_amount": 200.0,
+            "note": "",
+            "type": "sale",
+            "items": [{"quantity": 2, "unit_price": 100.0}],
+        },
+    )
+
+    header_row = card.content.controls[0].controls[0]
+    header_values = [
+        control.content.value if hasattr(control, "content") and hasattr(control.content, "value")
+        else getattr(control, "value", None)
+        for control in header_row.controls
+    ]
+
+    assert "2026-04-22" in header_values
+    assert "10:05" in header_values
+
+
 def test_ctrl_enter_submit_does_not_leave_extra_blank_item_row():
     class DummyPage:
         def __init__(self):
