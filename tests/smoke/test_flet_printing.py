@@ -500,3 +500,20 @@ def test_create_input_panel_keeps_actions_outside_scrollable_form():
         if _control_label(control)
     ]
     assert "✅ 添加记录" not in scroll_texts
+
+
+def test_create_records_panel_uses_list_view_for_long_record_lists():
+    class DummyPage:
+        def __init__(self):
+            self.updated = False
+
+        def update(self):
+            self.updated = True
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.page = cast(accounting_flet.ft.Page, cast(object, DummyPage()))
+
+    panel = accounting_flet.AccountingApp.create_records_panel(app)
+
+    assert isinstance(app.records_list, accounting_flet.ft.ListView)
+    assert panel.content.controls[3].content is app.records_list
