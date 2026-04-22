@@ -1,12 +1,12 @@
 {
-    "version": "1.15.1",
-    "release_date": "2026-04-21",
-    "message": "打包版更新通道升级：支持通过 GitHub Releases 直接更新软件",
-    "exe_asset_name": "TextileAccounting_v1.15.1.exe",
+    "version": "1.15.2",
+    "release_date": "2026-04-22",
+    "message": "修复录入区交互细节：新增记录排序、Ctrl+Enter 提交和固定添加按钮",
+    "exe_asset_name": "TextileAccounting_v1.15.2.exe",
     "changes": [
-        "打包 exe 版优先通过 GitHub Releases 下载新软件包",
-        "保留源码运行模式的文件级更新作为兼容兜底",
-        "发布资产名称已写入版本清单，便于自动更新定位"
+        "新增记录后，最新记录会稳定显示在列表最上方",
+        "修复 Ctrl+Enter 提交后可能多出一行空商品明细的问题",
+        "录入区按钮栏固定在卡片底部，商品增多时无需下拉很久再提交"
     ],
     "min_version": "1.0.0"
 }

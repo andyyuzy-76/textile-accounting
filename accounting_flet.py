@@ -56,7 +56,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.14.0"
+VERSION = "1.15.2"
 
 
 class AccountingApp:
@@ -125,21 +125,20 @@ class AccountingApp:
         self.stats_text = ft.Text()
         self.records_list = ft.Column()
         self.filter_date_field = ft.TextField()
+        self.records_scope_text = ft.Text()
         self.total_label = ft.Text()
+        self.record_filter_buttons: dict[str, ft.TextButton] = {}
         self.printer_settings: dict[str, Any] = self.printer_settings_store.load()
         self.records = self.load_records()
         self.item_rows: list[dict[str, Any]] = []
+        self._ctrl_enter_submit_pending = False
         self.receipt_printer = (
             ReceiptPrinterClass() if PRINT_AVAILABLE and ReceiptPrinterClass else None
         )
         self.load_printer_settings()
 
         # 设置全局键盘事件：Ctrl+Enter 提交记录
-        def on_keyboard(e):
-            if e.key == "Enter" and e.ctrl:
-                self.add_record()
-
-        page.on_keyboard_event = on_keyboard
+        page.on_keyboard_event = self.handle_main_form_keyboard
 
         try:
             self.build_ui()
@@ -175,6 +174,38 @@ class AccountingApp:
                 self.receipt_printer, self.printer_settings
             )
         self.refresh_customer_dropdown()
+
+    def handle_main_form_keyboard(self, e):
+        """处理主界面的全局键盘事件"""
+        if e.key == "Enter" and e.ctrl:
+            self._ctrl_enter_submit_pending = True
+            self.add_record()
+
+    def should_skip_price_submit_after_ctrl_enter(self) -> bool:
+        """避免 Ctrl+Enter 提交后，价格输入框的回车事件再次补空行"""
+        if not getattr(self, "_ctrl_enter_submit_pending", False):
+            return False
+
+        self._ctrl_enter_submit_pending = False
+
+        item_rows = getattr(self, "item_rows", [])
+        if not item_rows:
+            return True
+
+        for row in item_rows:
+            if str(row["qty_field"].value or "").strip():
+                return False
+            if str(row["price_field"].value or "").strip():
+                return False
+            if str(row["type_field"].value or "sale").strip() != "sale":
+                return False
+
+        if str(getattr(self.customer_field, "value", "") or "").strip():
+            return False
+        if str(getattr(self.note_field, "value", "") or "").strip():
+            return False
+
+        return True
 
     def maybe_auto_print(self, record: dict[str, Any]):
         """在启用时自动打印小票"""
@@ -942,23 +973,38 @@ class AccountingApp:
                     ft.Container(
                         content=ft.Column(
                             controls=[
-                                ft.Text(
-                                    "📝 新记录",
-                                    size=18,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=AppleColors.TEXT_PRIMARY,
+                                ft.Container(
+                                    content=ft.Column(
+                                        controls=[
+                                            ft.Text(
+                                                "📝 新记录",
+                                                size=18,
+                                                weight=ft.FontWeight.BOLD,
+                                                color=AppleColors.TEXT_PRIMARY,
+                                            ),
+                                            ft.Divider(
+                                                height=1,
+                                                color=AppleColors.DIVIDER,
+                                            ),
+                                            date_row,
+                                            items_section,
+                                            summary_section,
+                                            self.customer_field,
+                                            self.note_field,
+                                        ],
+                                        spacing=15,
+                                        scroll=ft.ScrollMode.AUTO,
+                                    ),
+                                    expand=True,
                                 ),
                                 ft.Divider(height=1, color=AppleColors.DIVIDER),
-                                date_row,
-                                items_section,
-                                summary_section,
-                                self.customer_field,
-                                self.note_field,
-                                add_btn,
-                                clear_btn,
+                                ft.Row(
+                                    controls=[add_btn, clear_btn],
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                ),
                             ],
                             spacing=15,
-                            scroll=ft.ScrollMode.AUTO,
+                            expand=True,
                         ),
                         padding=20,
                         bgcolor=AppleColors.BG_SECONDARY,
@@ -1008,36 +1054,55 @@ class AccountingApp:
             ),
         ]
 
+        self.records_scope_text = ft.Text(
+            "当前：今天",
+            size=13,
+            color=AppleColors.TEXT_SECONDARY,
+        )
+
+        self.record_filter_buttons = {
+            "today": ft.TextButton(
+                "今天",
+                on_click=lambda _: self.show_today_records(),
+                style=self.build_record_filter_button_style(active=True),
+            ),
+            "month": ft.TextButton(
+                "本月",
+                on_click=lambda _: self.show_month_records(),
+                style=self.build_record_filter_button_style(active=False),
+            ),
+            "year": ft.TextButton(
+                "本年",
+                on_click=lambda _: self.show_year_records(),
+                style=self.build_record_filter_button_style(active=False),
+            ),
+            "all": ft.TextButton(
+                "全部",
+                on_click=lambda _: self.show_all_records(),
+                style=self.build_record_filter_button_style(active=False),
+            ),
+        }
+
         # 筛选按钮
         filter_buttons = ft.Row(
             controls=[
-                ft.Text(
-                    "📋 记录列表",
-                    size=18,
-                    weight=ft.FontWeight.BOLD,
-                    color=AppleColors.TEXT_PRIMARY,
+                ft.Column(
+                    controls=[
+                        ft.Text(
+                            "📋 记录列表",
+                            size=18,
+                            weight=ft.FontWeight.BOLD,
+                            color=AppleColors.TEXT_PRIMARY,
+                        ),
+                        self.records_scope_text,
+                    ],
+                    spacing=4,
                 ),
                 ft.Container(expand=True),
-                ft.TextButton(
-                    "今天",
-                    on_click=lambda _: self.show_today_records(),
-                    style=ft.ButtonStyle(color=AppleColors.PRIMARY),
-                ),
-                ft.TextButton(
-                    "本月",
-                    on_click=lambda _: self.show_month_records(),
-                    style=ft.ButtonStyle(color=AppleColors.TEXT_SECONDARY),
-                ),
-                ft.TextButton(
-                    "本年",
-                    on_click=lambda _: self.show_year_records(),
-                    style=ft.ButtonStyle(color=AppleColors.TEXT_SECONDARY),
-                ),
-                ft.TextButton(
-                    "全部",
-                    on_click=lambda _: self.show_all_records(),
-                    style=ft.ButtonStyle(color=AppleColors.TEXT_SECONDARY),
-                ),
+                self.record_filter_buttons["today"],
+                self.record_filter_buttons["month"],
+                self.record_filter_buttons["year"],
+                self.record_filter_buttons["all"],
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
@@ -1175,6 +1240,8 @@ class AccountingApp:
         # 在单价输入框按回车时，添加新的一行
         async def _price_on_submit(e):
             try:
+                if self.should_skip_price_submit_after_ctrl_enter():
+                    return
                 # 添加新行
                 self.add_item_row()
                 # 焦点移动到新行的数量输入框
@@ -1334,11 +1401,76 @@ class AccountingApp:
         self.show_today_records()
         self.update_stats()
 
+    def build_record_filter_button_style(self, active: bool) -> ft.ButtonStyle:
+        """构建记录筛选按钮样式"""
+        return ft.ButtonStyle(
+            color=AppleColors.PRIMARY if active else AppleColors.TEXT_SECONDARY,
+            bgcolor="#e8f2ff" if active else None,
+            shape=ft.RoundedRectangleBorder(radius=999),
+            padding=ft.Padding(left=14, right=14, top=8, bottom=8),
+        )
+
+    def update_records_scope(self, scope_key: str, detail: str, count: int):
+        """更新当前记录筛选范围的可视反馈"""
+        scope_labels = {
+            "today": "今天",
+            "date": "指定日期",
+            "month": "本月",
+            "year": "本年",
+            "all": "全部",
+        }
+        scope_label = scope_labels.get(scope_key, "记录")
+        detail_suffix = f" ({detail})" if detail else ""
+        count_suffix = f" · {count} 条"
+
+        if hasattr(self, "records_scope_text") and self.records_scope_text:
+            self.records_scope_text.value = (
+                f"当前：{scope_label}{detail_suffix}{count_suffix}"
+            )
+
+        for key, button in getattr(self, "record_filter_buttons", {}).items():
+            button.style = self.build_record_filter_button_style(key == scope_key)
+
+    def get_record_date_text(self, record: dict[str, Any]) -> str:
+        """统一读取记录日期，避免数据格式差异影响筛选"""
+        return str(record.get("date", "")).strip()
+
+    def get_record_created_at_text(self, record: dict[str, Any]) -> str:
+        """统一读取记录创建时间，用于同日记录排序"""
+        return str(record.get("created_at", "")).strip()
+
+    def get_record_sort_key(self, record: dict[str, Any]) -> tuple[str, str, int]:
+        """统一记录排序：日期倒序，再按创建时间和记录ID倒序"""
+        try:
+            record_id = int(record.get("id", 0))
+        except (TypeError, ValueError):
+            record_id = 0
+
+        return (
+            self.get_record_date_text(record),
+            self.get_record_created_at_text(record),
+            record_id,
+        )
+
+    def show_records_for_scope(
+        self,
+        scope_key: str,
+        detail: str,
+        records: list[dict[str, Any]],
+        empty_message: str,
+    ):
+        """按指定范围展示记录，并同步界面反馈"""
+        self.update_records_scope(scope_key, detail, len(records))
+        try:
+            self.display_records(records, empty_message)
+        except TypeError:
+            self.display_records(records)
+
     def show_today_records(self):
         """显示今日记录"""
         today = datetime.now().strftime("%Y-%m-%d")
-        filtered = [r for r in self.records if r["date"] == today]
-        self.display_records(filtered)
+        filtered = [r for r in self.records if self.get_record_date_text(r) == today]
+        self.show_records_for_scope("today", today, filtered, f"{today} 暂无记录")
 
     def fill_today_filter_date(self):
         """将筛选日期填充为今天"""
@@ -1357,34 +1489,88 @@ class AccountingApp:
             self.show_error("日期格式错误，请使用 YYYY-MM-DD")
             return
 
-        filtered = [r for r in self.records if r["date"] == selected_date]
-        self.display_records(filtered)
+        filtered = [
+            r for r in self.records if self.get_record_date_text(r) == selected_date
+        ]
+        self.show_records_for_scope(
+            "date",
+            selected_date,
+            filtered,
+            f"{selected_date} 暂无记录",
+        )
 
     def show_month_records(self):
         """显示本月记录"""
         this_month = datetime.now().strftime("%Y-%m")
-        filtered = [r for r in self.records if r["date"].startswith(this_month)]
-        self.display_records(filtered)
+        filtered = [
+            r for r in self.records if self.get_record_date_text(r).startswith(this_month)
+        ]
+        self.show_records_for_scope("month", this_month, filtered, f"{this_month} 暂无记录")
 
     def show_year_records(self):
         """显示本年记录"""
         this_year = datetime.now().strftime("%Y")
-        filtered = [r for r in self.records if r["date"].startswith(this_year)]
-        self.display_records(filtered)
+        filtered = [
+            r for r in self.records if self.get_record_date_text(r).startswith(this_year)
+        ]
+        self.show_records_for_scope("year", this_year, filtered, f"{this_year} 暂无记录")
 
     def show_all_records(self):
         """显示所有记录"""
-        self.display_records(self.records)
+        self.show_records_for_scope(
+            "all",
+            "",
+            self.records,
+            "当前没有任何记录",
+        )
 
-    def display_records(self, records):
+    def display_records(self, records, empty_message: str = "暂无记录"):
         """显示记录列表"""
         print(f"[DEBUG] display_records called with {len(records)} records")
         self.records_list.controls.clear()
 
         # 按日期排序（降序）
-        sorted_records = sorted(records, key=lambda x: x["date"], reverse=True)
+        sorted_records = sorted(
+            records,
+            key=self.get_record_sort_key,
+            reverse=True,
+        )
 
         total = 0.0
+        if not sorted_records:
+            empty_controls = [
+                ft.Text(
+                    "暂无记录",
+                    size=18,
+                    weight=ft.FontWeight.BOLD,
+                    color=AppleColors.TEXT_PRIMARY,
+                    text_align=ft.TextAlign.CENTER,
+                )
+            ]
+            if empty_message and empty_message != "暂无记录":
+                empty_controls.append(
+                    ft.Text(
+                        empty_message,
+                        size=13,
+                        color=AppleColors.TEXT_SECONDARY,
+                        text_align=ft.TextAlign.CENTER,
+                    )
+                )
+
+            self.records_list.controls.append(
+                ft.Container(
+                    content=ft.Column(
+                        controls=empty_controls,
+                        spacing=6,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding(left=20, right=20, top=32, bottom=32),
+                    bgcolor=AppleColors.BG_TERTIARY,
+                    border_radius=14,
+                    border=ft.Border.all(1, AppleColors.BORDER),
+                )
+            )
+
         for record in sorted_records:
             # 创建记录卡片
             card = self.create_record_card(record)
