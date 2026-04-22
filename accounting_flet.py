@@ -56,7 +56,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.3"
+VERSION = "1.15.4"
 
 
 class AccountingApp:
@@ -1116,9 +1116,10 @@ class AccountingApp:
         )
 
         # 记录列表
-        self.records_list = ft.Column(
+        self.records_list = ft.ListView(
             spacing=10,
-            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            auto_scroll=False,
         )
 
         # 合计显示
@@ -1529,7 +1530,6 @@ class AccountingApp:
 
     def display_records(self, records, empty_message: str = "暂无记录"):
         """显示记录列表"""
-        print(f"[DEBUG] display_records called with {len(records)} records")
         self.records_list.controls.clear()
 
         # 按日期排序（降序）
@@ -1596,7 +1596,6 @@ class AccountingApp:
 
     def create_record_card(self, record):
         """创建记录卡片"""
-        print(f"[DEBUG] create_record_card for record {record.get('id')}")
         # 格式化明细 - 每个明细单独显示，退货用红色
         items = record.get("items", [])
         detail_controls = []
