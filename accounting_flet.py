@@ -57,7 +57,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.7"
+VERSION = "1.15.8"
 
 
 class AccountingApp:
@@ -1566,6 +1566,21 @@ class AccountingApp:
         """统一读取记录创建时间，用于同日记录排序"""
         return str(record.get("created_at", "")).strip()
 
+    def get_record_created_time_display(self, record: dict[str, Any]) -> str:
+        """提取记录创建时间的时分，供列表展示"""
+        created_at = self.get_record_created_at_text(record).replace("T", " ")
+        if not created_at:
+            return ""
+
+        if " " in created_at:
+            time_part = created_at.split(" ", 1)[1].strip()
+        else:
+            time_part = created_at.strip()
+
+        if len(time_part) >= 5 and time_part[2] == ":":
+            return time_part[:5]
+        return ""
+
     def get_record_sort_key(self, record: dict[str, Any]) -> tuple[str, str, int]:
         """统一记录排序：日期倒序，再按创建时间和记录ID倒序"""
         try:
@@ -1780,6 +1795,7 @@ class AccountingApp:
         type_text, type_color, card_bgcolor, card_border_color = (
             self.get_record_visuals(record)
         )
+        created_time_text = self.get_record_created_time_display(record)
         total_amount = float(record.get("total_amount", 0))
         amount_text = (
             f"-¥{abs(total_amount):.2f}" if total_amount < 0 else f"¥{total_amount:.2f}"
@@ -1865,6 +1881,13 @@ class AccountingApp:
                                         size=14,
                                         color=AppleColors.TEXT_SECONDARY,
                                     ),
+                                    ft.Text(
+                                        created_time_text,
+                                        size=13,
+                                        color=AppleColors.TEXT_TERTIARY,
+                                    )
+                                    if created_time_text
+                                    else ft.Container(),
                                 ],
                                 spacing=10,
                             ),
