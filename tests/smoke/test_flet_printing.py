@@ -132,7 +132,7 @@ def test_check_for_updates_shows_update_button_when_update_available(monkeypatch
 
     assert page.dialog is not None
     assert page.dialog.actions[1].visible is True
-    assert "9.9.9" in page.dialog.content.content.value
+    assert "9.9.9" in page.dialog.content.content.controls[0].value
 
 
 def test_check_for_updates_shows_pending_release_message_without_update_button(
@@ -178,7 +178,76 @@ def test_check_for_updates_shows_pending_release_message_without_update_button(
 
     assert page.dialog is not None
     assert page.dialog.actions[1].visible is False
-    assert "尚未发布" in page.dialog.content.content.value
+    assert "尚未发布" in page.dialog.content.content.controls[0].value
+
+
+def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch):
+    class DummyPage:
+        def __init__(self):
+            self.dialog = None
+            self.updated = False
+
+        def show_dialog(self, dlg):
+            self.dialog = dlg
+
+        def pop_dialog(self):
+            self.dialog = None
+
+        def run_task(self, fn):
+            import asyncio
+
+            asyncio.run(fn())
+
+        def update(self):
+            self.updated = True
+
+    monkeypatch.setattr(
+        accounting_flet,
+        "check_updates_fn",
+        lambda silent=False: (True, "1.15.5", "1.15.4", "新版本说明"),
+    )
+
+    progress_messages = []
+
+    def fake_perform_update(callback=None):
+        assert callback is not None
+        callback("正在下载软件更新包...")
+        callback("正在校验更新包...")
+        callback("正在应用更新...")
+        callback("正在重启程序...")
+        progress_messages.append("done")
+        return True, "更新成功"
+
+    monkeypatch.setattr(accounting_flet, "perform_update_fn", fake_perform_update)
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    page = DummyPage()
+    app.page = cast(accounting_flet.ft.Page, cast(object, page))
+    success_messages: list[str] = []
+    error_messages: list[str] = []
+    app.show_success = success_messages.append
+    app.show_error = error_messages.append
+
+    accounting_flet.AccountingApp.check_for_updates(app)
+
+    assert page.dialog is not None
+    run_update_button = page.dialog.actions[1]
+    assert run_update_button.visible is True
+
+    run_update_button.on_click(None)
+
+    dialog_column = page.dialog.content.content
+    update_status = dialog_column.controls[0]
+    update_progress = dialog_column.controls[1]
+    update_hint = dialog_column.controls[2]
+
+    assert progress_messages == ["done"]
+    assert success_messages == ["更新成功"]
+    assert error_messages == []
+    assert "正在重启程序..." in update_status.value
+    assert update_progress.visible is True
+    assert update_progress.value == 1.0
+    assert "请勿关闭程序" in update_hint.value
 
 
 def test_show_receipt_preview_opens_dialog(monkeypatch):
