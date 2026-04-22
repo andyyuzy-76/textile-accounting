@@ -1,5 +1,20 @@
+import asyncio
 import accounting_flet
+from datetime import datetime
 from typing import Any, cast
+
+
+def _control_label(control):
+    if hasattr(control, "text"):
+        return control.text
+    if hasattr(control, "content"):
+        if isinstance(control.content, str):
+            return control.content
+        if hasattr(control.content, "value"):
+            return control.content.value
+    if hasattr(control, "value"):
+        return control.value
+    return None
 
 
 def test_maybe_auto_print_respects_setting():
@@ -206,3 +221,236 @@ def test_show_selected_date_records_filters_exact_date():
     accounting_flet.AccountingApp.show_selected_date_records(app)
 
     assert captured["records"] == [{"date": "2026-04-21", "id": 1}]
+
+
+def test_show_month_records_updates_scope_text_and_filters_current_month(
+    monkeypatch,
+):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 4, 22)
+
+    monkeypatch.setattr(accounting_flet, "datetime", FixedDateTime)
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.records = [
+        {"date": "2026-04-21", "id": 1},
+        {"date": "2026-04-01", "id": 2},
+        {"date": "2026-03-31", "id": 3},
+    ]
+    app.records_scope_text = cast(
+        accounting_flet.ft.Text,
+        cast(object, type("Label", (), {"value": ""})()),
+    )
+
+    captured = {}
+    app.display_records = lambda records, empty_message=None: captured.setdefault(
+        "records", records
+    )
+
+    accounting_flet.AccountingApp.show_month_records(app)
+
+    assert captured["records"] == [
+        {"date": "2026-04-21", "id": 1},
+        {"date": "2026-04-01", "id": 2},
+    ]
+    assert "本月" in app.records_scope_text.value
+    assert "2 条" in app.records_scope_text.value
+
+
+def test_show_year_records_updates_scope_text_and_filters_current_year(monkeypatch):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 4, 22)
+
+    monkeypatch.setattr(accounting_flet, "datetime", FixedDateTime)
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.records = [
+        {"date": "2026-04-21", "id": 1},
+        {"date": "2026-01-15", "id": 2},
+        {"date": "2025-12-31", "id": 3},
+    ]
+    app.records_scope_text = cast(
+        accounting_flet.ft.Text,
+        cast(object, type("Label", (), {"value": ""})()),
+    )
+
+    captured = {}
+    app.display_records = lambda records, empty_message=None: captured.setdefault(
+        "records", records
+    )
+
+    accounting_flet.AccountingApp.show_year_records(app)
+
+    assert captured["records"] == [
+        {"date": "2026-04-21", "id": 1},
+        {"date": "2026-01-15", "id": 2},
+    ]
+    assert "本年" in app.records_scope_text.value
+    assert "2 条" in app.records_scope_text.value
+
+
+def test_display_records_shows_empty_state_when_no_records():
+    class DummyPage:
+        def __init__(self):
+            self.updated = False
+
+        def update(self):
+            self.updated = True
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.page = cast(accounting_flet.ft.Page, cast(object, DummyPage()))
+    app.records_list = accounting_flet.ft.Column()
+    app.total_label = accounting_flet.ft.Text()
+
+    accounting_flet.AccountingApp.display_records(app, [], "2026-04 没有记录")
+
+    assert len(app.records_list.controls) == 1
+    assert app.total_label.value == "¥0.00"
+    assert cast(Any, app.page).updated is True
+
+
+def test_display_records_puts_newer_same_day_records_on_top():
+    class DummyPage:
+        def __init__(self):
+            self.updated = False
+
+        def update(self):
+            self.updated = True
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.page = cast(accounting_flet.ft.Page, cast(object, DummyPage()))
+    app.records_list = accounting_flet.ft.Column()
+    app.total_label = accounting_flet.ft.Text()
+    app.create_record_card = lambda record: accounting_flet.ft.Text(str(record["id"]))
+
+    accounting_flet.AccountingApp.display_records(
+        app,
+        [
+            {
+                "id": 1,
+                "date": "2026-04-22",
+                "created_at": "2026-04-22 10:00:00",
+                "total_amount": 100.0,
+            },
+            {
+                "id": 2,
+                "date": "2026-04-22",
+                "created_at": "2026-04-22 10:00:01",
+                "total_amount": 200.0,
+            },
+            {
+                "id": 3,
+                "date": "2026-04-22",
+                "created_at": "2026-04-22 10:00:01",
+                "total_amount": 300.0,
+            },
+            {
+                "id": 4,
+                "date": "2026-04-21",
+                "created_at": "2026-04-21 23:59:59",
+                "total_amount": 400.0,
+            },
+        ],
+    )
+
+    assert [control.value for control in app.records_list.controls] == [
+        "3",
+        "2",
+        "1",
+        "4",
+    ]
+
+
+def test_ctrl_enter_submit_does_not_leave_extra_blank_item_row():
+    class DummyPage:
+        def __init__(self):
+            self.updated = False
+
+        def update(self):
+            self.updated = True
+
+    class DummyRecordService:
+        def add_record(self, **kwargs):
+            return {
+                "id": 99,
+                "date": "2026-04-22",
+                "total_amount": 100.0,
+                "type": "sale",
+            }
+
+        def list_records(self):
+            return []
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.page = cast(accounting_flet.ft.Page, cast(object, DummyPage()))
+    app.item_rows = []
+    app.items_container = accounting_flet.ft.Column()
+    app.summary_qty = accounting_flet.ft.Text()
+    app.summary_total = accounting_flet.ft.Text()
+    app.customer_field = accounting_flet.ft.Dropdown(options=[])
+    app.note_field = accounting_flet.ft.TextField()
+    app.date_field = accounting_flet.ft.TextField(value="2026-04-22")
+    app.record_service = cast(Any, DummyRecordService())
+    app.records = []
+    app.printer_settings = {"auto_print": False}
+    app.show_success = lambda message: None
+    app.show_error = lambda message: None
+    app.refresh_display = lambda: None
+    app.maybe_auto_print = lambda record: None
+
+    accounting_flet.AccountingApp.add_item_row(app)
+    app.item_rows[0]["qty_field"].value = "1"
+    app.item_rows[0]["price_field"].value = "100"
+
+    accounting_flet.AccountingApp.handle_main_form_keyboard(
+        app,
+        cast(
+            Any,
+            type("KeyboardEvent", (), {"key": "Enter", "ctrl": True})(),
+        ),
+    )
+    asyncio.run(app.item_rows[0]["price_field"].on_submit(None))
+
+    assert len(app.item_rows) == 1
+
+
+def test_create_input_panel_keeps_actions_outside_scrollable_form():
+    class DummyPage:
+        def __init__(self):
+            self.updated = False
+
+        def update(self):
+            self.updated = True
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    app.page = cast(accounting_flet.ft.Page, cast(object, DummyPage()))
+    app.printer_settings = {"customers": []}
+    app.item_rows = []
+    app.add_item_row = lambda: None
+
+    panel = accounting_flet.AccountingApp.create_input_panel(app)
+
+    card_container = panel.content.controls[0]
+    card_content = card_container.content
+    scroll_section = card_content.controls[0]
+    action_bar = card_content.controls[-1]
+
+    assert isinstance(scroll_section, accounting_flet.ft.Container)
+    assert isinstance(scroll_section.content, accounting_flet.ft.Column)
+    assert scroll_section.content.scroll == accounting_flet.ft.ScrollMode.AUTO
+    assert isinstance(action_bar, accounting_flet.ft.Row)
+    assert [_control_label(control) for control in action_bar.controls] == [
+        "✅ 添加记录",
+        "清空表单",
+    ]
+
+    scroll_texts = [
+        _control_label(control)
+        for control in scroll_section.content.controls
+        if _control_label(control)
+    ]
+    assert "✅ 添加记录" not in scroll_texts
