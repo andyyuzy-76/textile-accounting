@@ -1,6 +1,7 @@
 import io
 import json
 import hashlib
+from pathlib import Path
 
 import auto_updater
 
@@ -126,3 +127,58 @@ def test_check_for_updates_hides_exe_update_until_release_asset_exists(monkeypat
     assert remote == "1.15.2"
     assert current == "1.15.1"
     assert "尚未发布" in message
+
+
+def test_perform_binary_update_resets_pyinstaller_environment_before_restart(
+    monkeypatch, tmp_path
+):
+    temp_dir = tmp_path / "update-temp"
+    temp_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        auto_updater,
+        "get_remote_manifest",
+        lambda: {"exe_asset_name": "TextileAccounting_v1.15.4.exe"},
+    )
+    monkeypatch.setattr(
+        auto_updater,
+        "get_release_asset_info",
+        lambda asset_name: {
+            "browser_download_url": "https://example.com/TextileAccounting_v1.15.4.exe",
+            "size": 3,
+            "digest": None,
+        },
+    )
+    monkeypatch.setattr(auto_updater.tempfile, "mkdtemp", lambda: str(temp_dir))
+    monkeypatch.setattr(
+        auto_updater,
+        "download_url",
+        lambda url, dest_path: Path(dest_path).write_bytes(b"exe") or True,
+    )
+
+    def fake_popen(args, creationflags=0):
+        captured["args"] = args
+        captured["creationflags"] = creationflags
+        return None
+
+    monkeypatch.setattr(auto_updater.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(auto_updater.sys, "executable", str(tmp_path / "app.exe"))
+
+    class ExitCalled(Exception):
+        pass
+
+    def fake_exit(code):
+        raise ExitCalled(code)
+
+    monkeypatch.setattr(auto_updater.os, "_exit", fake_exit)
+
+    try:
+        auto_updater.perform_binary_update()
+    except ExitCalled:
+        pass
+
+    script_path = temp_dir / "apply_update.bat"
+    assert script_path.exists()
+    script = script_path.read_text(encoding="utf-8")
+    assert "set PYINSTALLER_RESET_ENVIRONMENT=1" in script

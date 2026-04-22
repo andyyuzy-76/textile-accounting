@@ -1,12 +1,12 @@
 {
-    "version": "1.15.4",
+    "version": "1.15.5",
     "release_date": "2026-04-22",
-    "message": "修复记录列表性能：本月 / 本年筛选不再因大量记录而卡死",
-    "exe_asset_name": "TextileAccounting_v1.15.4.exe",
+    "message": "修复打包版执行更新后的 PyInstaller 临时目录清理警告",
+    "exe_asset_name": "TextileAccounting_v1.15.5.exe",
     "changes": [
-        "记录列表切换为 ListView，月度和年度筛选在大量记录下更流畅",
-        "移除记录渲染热路径里的逐条调试输出，避免筛选时主线程卡顿",
-        "保留 1.15.3 的更新器加固：先校验发布资产和下载包，再执行 exe 覆盖更新"
+        "执行更新后重启新 exe 前，会重置 PyInstaller onefile 运行环境",
+        "避免更新完成后出现 Failed to remove temporary directory 的警告弹窗",
+        "保留 1.15.4 的记录列表性能修复：本月 / 本年筛选不再因大量记录卡死"
     ],
     "min_version": "1.0.0"
 }
