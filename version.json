@@ -1,12 +1,12 @@
 {
-    "version": "1.15.2",
+    "version": "1.15.3",
     "release_date": "2026-04-22",
-    "message": "修复录入区交互细节：新增记录排序、Ctrl+Enter 提交和固定添加按钮",
-    "exe_asset_name": "TextileAccounting_v1.15.2.exe",
+    "message": "修复更新链路：先校验发布资产与下载包，再执行 exe 覆盖更新",
+    "exe_asset_name": "TextileAccounting_v1.15.3.exe",
     "changes": [
-        "新增记录后，最新记录会稳定显示在列表最上方",
-        "修复 Ctrl+Enter 提交后可能多出一行空商品明细的问题",
-        "录入区按钮栏固定在卡片底部，商品增多时无需下拉很久再提交"
+        "打包版检查更新时，若 release 资产尚未发布，会明确提示稍后再试",
+        "执行更新前会校验下载包大小和 SHA-256 摘要，避免坏包覆盖本地程序",
+        "保留 1.15.2 的录入区交互修复：新增记录排序、Ctrl+Enter 提交、固定添加按钮"
     ],
     "min_version": "1.0.0"
 }

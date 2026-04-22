@@ -5,6 +5,7 @@
 
 import os
 import json
+import hashlib
 import urllib.request
 import urllib.error
 import tempfile
@@ -78,6 +79,14 @@ def get_remote_manifest():
 
 def get_release_asset_download_url(asset_name: str):
     """获取最新 release 中指定资产的下载地址"""
+    asset = get_release_asset_info(asset_name)
+    if asset:
+        return asset.get("browser_download_url")
+    return None
+
+
+def get_release_asset_info(asset_name: str):
+    """获取最新 release 中指定资产的元信息"""
     try:
         req = urllib.request.Request(
             GITHUB_RELEASE_API_URL,
@@ -91,11 +100,45 @@ def get_release_asset_download_url(asset_name: str):
             data = json.loads(response.read().decode("utf-8"))
         for asset in data.get("assets", []):
             if asset.get("name") == asset_name:
-                return asset.get("browser_download_url")
+                return asset
         return None
     except Exception as e:
         print(f"获取 release 资产失败: {e}")
         return None
+
+
+def verify_downloaded_file(
+    file_path: str,
+    *,
+    expected_size: int | None = None,
+    expected_digest: str | None = None,
+):
+    """校验下载文件大小和摘要"""
+    if not os.path.exists(file_path):
+        return False, "更新包不存在"
+
+    if expected_size is not None:
+        actual_size = os.path.getsize(file_path)
+        if actual_size != expected_size:
+            return (
+                False,
+                f"更新包大小校验失败（期望 {expected_size} 字节，实际 {actual_size} 字节）",
+            )
+
+    if expected_digest:
+        algorithm, sep, digest_value = expected_digest.partition(":")
+        if not sep or algorithm.lower() != "sha256" or not digest_value:
+            return False, f"不支持的摘要格式: {expected_digest}"
+
+        hasher = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        actual_digest = hasher.hexdigest()
+        if actual_digest.lower() != digest_value.lower():
+            return False, "更新包摘要校验失败，请重新尝试下载"
+
+    return True, ""
 
 
 def download_url(url, dest_path):
@@ -126,9 +169,12 @@ def perform_binary_update(callback=None):
         return False, "无法获取远程版本信息"
 
     asset_name = manifest.get("exe_asset_name", "家纺记账系统-苹果风格.exe")
-    asset_url = get_release_asset_download_url(asset_name)
-    if not asset_url:
+    asset_info = get_release_asset_info(asset_name)
+    if not asset_info:
         return False, f"未找到发布资产: {asset_name}"
+    asset_url = asset_info.get("browser_download_url")
+    expected_size = asset_info.get("size")
+    expected_digest = asset_info.get("digest")
 
     current_exe = sys.executable
     if not current_exe.lower().endswith(".exe"):
@@ -145,12 +191,22 @@ def perform_binary_update(callback=None):
         shutil.rmtree(temp_dir, ignore_errors=True)
         return False, "下载更新包失败"
 
+    verified, verify_message = verify_downloaded_file(
+        downloaded_exe,
+        expected_size=expected_size,
+        expected_digest=expected_digest,
+    )
+    if not verified:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return False, verify_message
+
     script = f"""@echo off
 chcp 65001 >nul
 set EXE_PATH={current_exe}
 set NEW_EXE={downloaded_exe}
 ping 127.0.0.1 -n 3 >nul
 copy /y "%NEW_EXE%" "%EXE_PATH%" >nul
+if errorlevel 1 exit /b 1
 start "" "%EXE_PATH%"
 """
     with open(updater_bat, "w", encoding="utf-8") as f:
@@ -312,14 +368,28 @@ def perform_update(callback=None):
 def check_for_updates(silent=True):
     """检查是否有更新"""
     current = get_current_version()
-    remote, message = get_remote_version()
+    manifest = get_remote_manifest()
 
-    if remote is None:
+    if manifest is None:
         if not silent:
             return False, "无法连接到服务器", current, ""
         return False, None, current, ""
 
+    remote = manifest.get("version", "1.0.0")
+    message = manifest.get("message", "")
+
     has_update = compare_versions(current, remote)
+
+    if has_update and is_frozen_app():
+        asset_name = manifest.get("exe_asset_name", "家纺记账系统-苹果风格.exe")
+        asset_info = get_release_asset_info(asset_name)
+        if not asset_info:
+            return (
+                False,
+                remote,
+                current,
+                f"检测到新版本 v{remote}，但更新包尚未发布，请稍后再试。",
+            )
 
     return has_update, remote, current, message or ""
 

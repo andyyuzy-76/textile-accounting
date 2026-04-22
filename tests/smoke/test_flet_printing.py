@@ -135,6 +135,52 @@ def test_check_for_updates_shows_update_button_when_update_available(monkeypatch
     assert "9.9.9" in page.dialog.content.content.value
 
 
+def test_check_for_updates_shows_pending_release_message_without_update_button(
+    monkeypatch,
+):
+    class DummyPage:
+        def __init__(self):
+            self.dialog = None
+            self.updated = False
+
+        def show_dialog(self, dlg):
+            self.dialog = dlg
+
+        def pop_dialog(self):
+            self.dialog = None
+
+        def run_task(self, fn):
+            import asyncio
+
+            asyncio.run(fn())
+
+        def update(self):
+            self.updated = True
+
+    monkeypatch.setattr(
+        accounting_flet,
+        "check_updates_fn",
+        lambda silent=False: (
+            False,
+            "1.15.2",
+            "1.15.1",
+            "检测到新版本 v1.15.2，但更新包尚未发布，请稍后再试。",
+        ),
+    )
+
+    app = object.__new__(accounting_flet.AccountingApp)
+    page = DummyPage()
+    app.page = cast(accounting_flet.ft.Page, cast(object, page))
+    app.show_success = lambda message: None
+    app.show_error = lambda message: None
+
+    accounting_flet.AccountingApp.check_for_updates(app)
+
+    assert page.dialog is not None
+    assert page.dialog.actions[1].visible is False
+    assert "尚未发布" in page.dialog.content.content.value
+
+
 def test_show_receipt_preview_opens_dialog(monkeypatch):
     class DummyPrinter:
         def format_receipt(self, record, compact=True, return_records=None):
