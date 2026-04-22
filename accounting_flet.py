@@ -7,6 +7,7 @@
 日期：2026-02-21
 """
 
+import asyncio
 import flet as ft
 import json
 import os
@@ -56,7 +57,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.5"
+VERSION = "1.15.6"
 
 
 class AccountingApp:
@@ -539,31 +540,90 @@ class AccountingApp:
     def check_for_updates(self):
         """检查更新"""
         update_status = ft.Text("⏳ 正在检查更新...", color=AppleColors.TEXT_SECONDARY)
+        update_progress = ft.ProgressBar(
+            value=0.0,
+            visible=False,
+            color=AppleColors.PRIMARY,
+            bgcolor=AppleColors.BORDER,
+            bar_height=8,
+            border_radius=999,
+            width=420,
+        )
+        update_hint = ft.Text(
+            "",
+            size=12,
+            color=AppleColors.TEXT_TERTIARY,
+        )
         run_update_button = ft.FilledButton(
             "执行更新",
             visible=False,
         )
+        close_button = ft.TextButton("关闭")
+
+        def get_update_progress_value(message: str, current: float) -> float:
+            stage_progress = [
+                ("准备", 0.08),
+                ("下载", 0.35),
+                ("校验", 0.62),
+                ("应用", 0.84),
+                ("重启", 1.0),
+            ]
+            for keyword, progress in stage_progress:
+                if keyword in message:
+                    return progress
+            return current
+
+        def set_update_progress(message: str):
+            current_value = float(update_progress.value or 0.0)
+            update_status.value = message
+            update_progress.visible = True
+            update_progress.value = get_update_progress_value(message, current_value)
+            update_hint.value = "更新期间请勿关闭程序，完成后会自动重启。"
+            run_update_button.disabled = True
+            run_update_button.content = "更新中..."
+            close_button.disabled = True
+            self.page.update()
 
         def close_dialog(_=None):
             self.page.pop_dialog()
 
         async def perform_update_task():
-            success, update_message = perform_update_fn()
+            set_update_progress("⏳ 正在准备更新...")
+            loop = asyncio.get_running_loop()
+
+            def progress_callback(message: str):
+                loop.call_soon_threadsafe(set_update_progress, message)
+
+            success, update_message = await asyncio.to_thread(
+                perform_update_fn,
+                progress_callback,
+            )
             if success:
                 self.show_success(update_message)
             else:
+                run_update_button.disabled = False
+                run_update_button.content = "执行更新"
+                close_button.disabled = False
                 self.show_error(update_message)
 
         run_update_button.on_click = lambda e: self.page.run_task(perform_update_task)
         dialog_actions: list[ft.Control] = [
-            ft.TextButton("关闭", on_click=close_dialog),
+            close_button,
             run_update_button,
         ]
+        close_button.on_click = close_dialog
 
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("🔍 检查更新", weight=ft.FontWeight.BOLD),
-            content=ft.Container(width=420, content=update_status),
+            content=ft.Container(
+                width=420,
+                content=ft.Column(
+                    controls=[update_status, update_progress, update_hint],
+                    spacing=12,
+                    tight=True,
+                ),
+            ),
             actions=dialog_actions,
             actions_alignment=ft.MainAxisAlignment.END,
         )

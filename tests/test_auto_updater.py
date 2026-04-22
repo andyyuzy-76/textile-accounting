@@ -182,3 +182,58 @@ def test_perform_binary_update_resets_pyinstaller_environment_before_restart(
     assert script_path.exists()
     script = script_path.read_text(encoding="utf-8")
     assert "set PYINSTALLER_RESET_ENVIRONMENT=1" in script
+
+
+def test_perform_binary_update_reports_progress_stages(monkeypatch, tmp_path):
+    temp_dir = tmp_path / "update-temp"
+    temp_dir.mkdir()
+    messages: list[str] = []
+
+    monkeypatch.setattr(
+        auto_updater,
+        "get_remote_manifest",
+        lambda: {"exe_asset_name": "TextileAccounting_v1.15.5.exe"},
+    )
+    monkeypatch.setattr(
+        auto_updater,
+        "get_release_asset_info",
+        lambda asset_name: {
+            "browser_download_url": "https://example.com/TextileAccounting_v1.15.5.exe",
+            "size": 3,
+            "digest": None,
+        },
+    )
+    monkeypatch.setattr(auto_updater.tempfile, "mkdtemp", lambda: str(temp_dir))
+    monkeypatch.setattr(
+        auto_updater,
+        "download_url",
+        lambda url, dest_path: Path(dest_path).write_bytes(b"exe") or True,
+    )
+    monkeypatch.setattr(
+        auto_updater,
+        "verify_downloaded_file",
+        lambda *args, **kwargs: (True, ""),
+    )
+    monkeypatch.setattr(
+        auto_updater.subprocess,
+        "Popen",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(auto_updater.sys, "executable", str(tmp_path / "app.exe"))
+
+    class ExitCalled(Exception):
+        pass
+
+    monkeypatch.setattr(auto_updater.os, "_exit", lambda code: (_ for _ in ()).throw(ExitCalled(code)))
+
+    try:
+        auto_updater.perform_binary_update(messages.append)
+    except ExitCalled:
+        pass
+
+    assert messages == [
+        "正在下载软件更新包...",
+        "正在校验更新包...",
+        "正在应用更新...",
+        "正在重启程序...",
+    ]

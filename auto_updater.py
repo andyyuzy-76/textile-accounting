@@ -191,6 +191,8 @@ def perform_binary_update(callback=None):
         shutil.rmtree(temp_dir, ignore_errors=True)
         return False, "下载更新包失败"
 
+    if callback:
+        callback("正在校验更新包...")
     verified, verify_message = verify_downloaded_file(
         downloaded_exe,
         expected_size=expected_size,
@@ -210,9 +212,13 @@ if errorlevel 1 exit /b 1
 set PYINSTALLER_RESET_ENVIRONMENT=1
 start "" "%EXE_PATH%"
 """
+    if callback:
+        callback("正在应用更新...")
     with open(updater_bat, "w", encoding="utf-8") as f:
         f.write(script)
 
+    if callback:
+        callback("正在重启程序...")
     subprocess.Popen(
         ["cmd", "/c", updater_bat], creationflags=subprocess.CREATE_NO_WINDOW
     )

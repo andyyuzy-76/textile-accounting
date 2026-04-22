@@ -1,12 +1,12 @@
 {
-    "version": "1.15.5",
+    "version": "1.15.6",
     "release_date": "2026-04-22",
-    "message": "修复打包版执行更新后的 PyInstaller 临时目录清理警告",
-    "exe_asset_name": "TextileAccounting_v1.15.5.exe",
+    "message": "更新弹窗新增阶段进度反馈，执行更新时不再像卡死",
+    "exe_asset_name": "TextileAccounting_v1.15.6.exe",
     "changes": [
-        "执行更新后重启新 exe 前，会重置 PyInstaller onefile 运行环境",
-        "避免更新完成后出现 Failed to remove temporary directory 的警告弹窗",
-        "保留 1.15.4 的记录列表性能修复：本月 / 本年筛选不再因大量记录卡死"
+        "检查更新弹窗新增状态文字和进度条，执行更新时会显示下载、校验、应用、重启阶段",
+        "执行更新过程改为后台线程运行，避免更新时界面看起来像卡死",
+        "保留 1.15.5 的修复：更新完成后重启新 exe 前会重置 PyInstaller onefile 运行环境"
     ],
     "min_version": "1.0.0"
 }
