@@ -207,6 +207,7 @@ set NEW_EXE={downloaded_exe}
 ping 127.0.0.1 -n 3 >nul
 copy /y "%NEW_EXE%" "%EXE_PATH%" >nul
 if errorlevel 1 exit /b 1
+set PYINSTALLER_RESET_ENVIRONMENT=1
 start "" "%EXE_PATH%"
 """
     with open(updater_bat, "w", encoding="utf-8") as f:
