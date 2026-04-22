@@ -44,7 +44,7 @@ except ImportError:
         return "1.13.0"
 
 # 版本信息
-VERSION = "1.15.2"
+VERSION = "1.15.3"
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 

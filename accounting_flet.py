@@ -56,7 +56,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.2"
+VERSION = "1.15.3"
 
 
 class AccountingApp:
@@ -575,6 +575,9 @@ class AccountingApp:
                 if has_update:
                     update_status.value = f"发现新版本 v{remote}\n当前版本: v{current}\n\n{message or '有可用更新。'}"
                     run_update_button.visible = True
+                elif message and remote and remote != current:
+                    update_status.value = message
+                    run_update_button.visible = False
                 else:
                     update_status.value = f"✅ 已是最新版本 v{current}"
                     run_update_button.visible = False
