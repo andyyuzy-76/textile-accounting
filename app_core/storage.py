@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 
 class JsonStore:
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, on_save: Callable[[], None] | None = None):
         self.file_path = file_path
+        self.on_save = on_save
 
     def load_list(self) -> list[dict[str, Any]]:
         if not self.file_path.exists():
@@ -26,3 +28,5 @@ class JsonStore:
             encoding="utf-8",
         )
         temp_path.replace(self.file_path)
+        if self.on_save is not None:
+            self.on_save()

@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 echo [2/3] 使用 Flet 打包...
-flet pack accounting_flet.py --name "家纺记账系统-苹果风格" --add-data "receipt_printer.py;."
+flet pack accounting_flet.py --name "家纺记账系统-苹果风格" --add-data "receipt_printer.py;." "version.json;."
 
 if errorlevel 1 (
     echo.

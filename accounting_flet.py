@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from app_core.paths import get_data_dir, get_records_file
+from app_core.services.cloud_backup import CloudBackupError, CloudBackupService, WebDAVClient
 from app_core.services.importers import import_csv_records
 from app_core.services.printer_settings import PrinterSettingsStore
 from app_core.services.records import RecordService
@@ -57,7 +58,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.8"
+VERSION = "1.15.9"
 
 
 class AccountingApp:
@@ -113,7 +114,17 @@ class AccountingApp:
         self.data_dir = str(get_data_dir())
         self.data_file = str(get_records_file())
         os.makedirs(self.data_dir, exist_ok=True)
-        self.record_service = RecordService(JsonStore(Path(self.data_file)))
+        self.cloud_backup = CloudBackupService(Path(self.data_dir))
+        self._backup_generation = 0
+        self.cloud_backup_button = ft.IconButton(
+            icon=cast(ft.IconData, ft.Icons.CLOUD_UPLOAD_OUTLINED),
+            icon_color=AppleColors.TEXT_SECONDARY,
+            tooltip="云端备份",
+            on_click=lambda _: self.show_cloud_backup(),
+        )
+        self.record_service = RecordService(
+            JsonStore(Path(self.data_file), on_save=self.schedule_cloud_backup)
+        )
         self.printer_settings_store = PrinterSettingsStore(
             Path(self.data_dir) / "printer_settings.json"
         )
@@ -160,6 +171,8 @@ class AccountingApp:
         except Exception:
             pass
 
+        self.schedule_cloud_backup()
+
     def load_records(self) -> list[dict[str, Any]]:
         """加载历史记录"""
         self.records = self.record_service.reload()
@@ -188,9 +201,218 @@ class AccountingApp:
                 self.receipt_printer, self.printer_settings
             )
         self.refresh_customer_dropdown()
+        self.schedule_cloud_backup()
+
+    def schedule_cloud_backup(self):
+        """合并短时间内的保存，网络操作在后台执行。"""
+        settings = self.cloud_backup.settings.load()
+        if settings.get("error"):
+            self.set_cloud_backup_status(settings["error"], error=True)
+            return
+        if not settings.get("auto_backup"):
+            return
+        self._backup_generation += 1
+        try:
+            self.page.run_task(self.auto_cloud_backup, self._backup_generation)
+        except Exception:
+            self.set_cloud_backup_status("自动备份未启动，请打开云端备份后重试。", error=True)
+
+    async def auto_cloud_backup(self, generation: int):
+        await asyncio.sleep(5)
+        if generation != self._backup_generation or not self.cloud_backup.settings.load().get("auto_backup"):
+            return
+        if not Path(self.data_file).exists():
+            return
+        try:
+            name = await asyncio.to_thread(self.cloud_backup.backup, force=False)
+            if name:
+                self.set_cloud_backup_status("自动备份成功")
+        except Exception as ex:
+            message = str(ex) if isinstance(ex, CloudBackupError) else "请检查网络和本地文件权限。"
+            self.set_cloud_backup_status(f"自动备份失败：{message}", error=True)
+        self.page.update()
+
+    def set_cloud_backup_status(self, message: str, *, error: bool = False):
+        self.cloud_backup_button.tooltip = f"云端备份：{message}"
+        self.cloud_backup_button.icon_color = AppleColors.WARNING if error else AppleColors.SUCCESS
+
+    def show_cloud_backup(self):
+        settings = self.cloud_backup.settings.load()
+        url_field = ft.TextField(label="WebDAV 地址", value=settings["url"],
+                                 hint_text="https://你的网盘地址/dav/", border_radius=10)
+        username_field = ft.TextField(label="账号", value=settings["username"], border_radius=10)
+        password_field = ft.TextField(label="WebDAV 应用密码", value=settings["password"],
+                                     password=True, can_reveal_password=True, border_radius=10)
+        auto_switch = ft.Switch(label="保存账目或设置后自动备份", value=settings["auto_backup"])
+        status = ft.Text(settings.get("error") or "填写网盘信息后，可先测试连接。", color=AppleColors.TEXT_SECONDARY)
+        last_backup = ft.Text("", size=12, color=AppleColors.TEXT_SECONDARY)
+        backup_list = ft.Dropdown(label="云端历史备份", options=[], expand=True)
+        progress = ft.ProgressBar(visible=False)
+        close_button = ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())
+        save_button = ft.FilledButton("保存设置")
+        test_button = ft.TextButton("测试连接")
+        upload_button = ft.FilledButton("立即备份")
+        list_button = ft.TextButton("刷新历史")
+        restore_button = ft.TextButton("恢复所选备份", disabled=True)
+        fields = [url_field, username_field, password_field, auto_switch]
+        buttons = [close_button, save_button, test_button, upload_button, list_button, restore_button, backup_list]
+        self._cloud_backup_busy = False
+
+        def update_last_backup():
+            saved_time = self.cloud_backup.state().get("last_backup")
+            last_backup.value = f"上次备份成功：{saved_time}" if saved_time else "尚无成功备份记录"
+
+        def current_settings():
+            return {"url": str(url_field.value or ""), "username": str(username_field.value or ""),
+                    "password": str(password_field.value or ""), "auto_backup": bool(auto_switch.value)}
+
+        def save_configuration():
+            value = self.cloud_backup.settings.save(current_settings())
+            url_field.value = value["url"]
+            username_field.value = value["username"]
+            self._backup_generation += 1
+            backup_list.options = []
+            backup_list.value = None
+            restore_button.disabled = True
+            return value
+
+        def set_busy(busy: bool):
+            self._cloud_backup_busy = busy
+            for control in fields + buttons:
+                control.disabled = busy
+            restore_button.disabled = busy or not backup_list.value
+            progress.visible = busy
+            self.page.update()
+
+        def show_failure(ex):
+            status.value = str(ex) if isinstance(ex, CloudBackupError) else "操作失败，请检查网络和本地文件权限。"
+            status.color = AppleColors.DANGER
+            self.set_cloud_backup_status(str(status.value), error=True)
+
+        def save_settings(_):
+            try:
+                save_configuration()
+                status.value = "云端备份设置已保存。"
+                status.color = AppleColors.SUCCESS
+                restore_button.disabled = True
+                self.schedule_cloud_backup()
+            except Exception as ex:
+                show_failure(ex)
+            self.page.update()
+
+        async def run_operation(operation: str):
+            if self._cloud_backup_busy:
+                return
+            try:
+                value = save_configuration()
+                client = WebDAVClient(value)
+            except Exception as ex:
+                show_failure(ex)
+                self.page.update()
+                return
+            set_busy(True)
+            status.color = AppleColors.TEXT_SECONDARY
+            status.value = {"test": "正在测试连接…", "upload": "正在上传并校验备份…", "list": "正在读取历史备份…"}[operation]
+            self.page.update()
+            try:
+                if operation == "test":
+                    await asyncio.to_thread(client.ensure_directory)
+                    status.value = "连接成功，云端备份目录可读取；立即备份将验证上传。"
+                elif operation == "upload":
+                    await asyncio.to_thread(self.cloud_backup.backup)
+                    status.value = "备份成功，已从云端下载并核对内容。"
+                    update_last_backup()
+                else:
+                    names = await asyncio.to_thread(self.cloud_backup.list_backups)
+                    backup_list.options = [ft.dropdown.Option(name) for name in names]
+                    backup_list.value = names[0] if names else None
+                    status.value = f"找到 {len(names)} 份云端备份。" if names else "云端还没有备份，请先点击立即备份。"
+                status.color = AppleColors.SUCCESS
+                self.set_cloud_backup_status(str(status.value))
+            except Exception as ex:
+                show_failure(ex)
+            finally:
+                set_busy(False)
+                self.schedule_cloud_backup()
+
+        async def prepare_restore():
+            name = backup_list.value
+            if not name or self._cloud_backup_busy:
+                return
+            if current_settings() != self.cloud_backup.settings.load():
+                status.value = "网盘设置已改变，请先刷新历史备份。"
+                self.page.update()
+                return
+            self._backup_generation += 1
+            set_busy(True)
+            status.value = "正在下载并校验所选备份…"
+            self.page.update()
+            try:
+                data = await asyncio.to_thread(self.cloud_backup.download, name)
+            except Exception as ex:
+                show_failure(ex)
+                set_busy(False)
+                self.schedule_cloud_backup()
+                return
+
+            async def confirm_restore(_):
+                confirm_button.disabled = True
+                cancel_button.disabled = True
+                self.page.update()
+                try:
+                    safety_dir = await asyncio.to_thread(self.cloud_backup.restore, data)
+                    self.load_records()
+                    self.load_printer_settings()
+                    self.refresh_customer_dropdown()
+                    self.refresh_display()
+                    status.value = f"恢复成功，原本地数据保存在：{safety_dir}"
+                    status.color = AppleColors.SUCCESS
+                except Exception as ex:
+                    show_failure(ex)
+                finally:
+                    self.page.pop_dialog()
+                    set_busy(False)
+                    self.schedule_cloud_backup()
+
+            def cancel_restore(_=None):
+                self.page.pop_dialog()
+                set_busy(False)
+                self.schedule_cloud_backup()
+
+            confirm_button = ft.FilledButton("确认恢复", on_click=confirm_restore)
+            cancel_button = ft.TextButton("取消", on_click=cancel_restore)
+            self.page.show_dialog(ft.AlertDialog(
+                modal=True, title=ft.Text("确认恢复云端备份"),
+                content=ft.Text(f"将用所选备份的 {len(data['records'])} 条账目、客户列表和打印设置替换当前数据。\n\n恢复前会保留本地原始文件副本。"),
+                actions=[cancel_button, confirm_button],
+            ))
+
+        save_button.on_click = save_settings
+        test_button.on_click = lambda _: self.page.run_task(run_operation, "test")
+        upload_button.on_click = lambda _: self.page.run_task(run_operation, "upload")
+        list_button.on_click = lambda _: self.page.run_task(run_operation, "list")
+        restore_button.on_click = lambda _: self.page.run_task(prepare_restore)
+        def select_backup(_):
+            restore_button.disabled = not backup_list.value
+            self.page.update()
+
+        backup_list.on_select = select_backup
+        update_last_backup()
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True, title=ft.Text("☁ 云端备份", weight=ft.FontWeight.BOLD),
+            content=ft.Container(width=540, content=ft.Column(
+                controls=[ft.Text("支持 WebDAV 网盘。备份包含账目、客户列表和打印设置。", size=13),
+                          *fields, ft.Row([test_button, upload_button]), progress, status, last_backup,
+                          ft.Divider(), ft.Row([backup_list, list_button]), restore_button,
+                          ft.Text("开启自动备份后，每次保存约 5 秒后备份，连续保存会合并；断网后在下次保存或启动时重试。\n备份为 JSON 文件，请使用私有网盘；历史版本可在网盘中清理。", size=12, color=AppleColors.TEXT_SECONDARY)],
+                tight=True, spacing=12, scroll=ft.ScrollMode.AUTO, height=560,
+            )), actions=[close_button, save_button],
+        ))
 
     def handle_main_form_keyboard(self, e):
         """处理主界面的全局键盘事件"""
+        if getattr(self, "_cloud_backup_busy", False):
+            return
         if e.key == "Enter" and e.ctrl:
             self._ctrl_enter_submit_pending = True
             self.add_record()
@@ -260,7 +482,7 @@ class AccountingApp:
                 return False
             if str(row["price_field"].value or "").strip():
                 return False
-            if str(row["type_field"].value or "sale").strip() != "sale":
+            if str(row["type_field"].data or "sale").strip() != "sale":
                 return False
 
         if str(getattr(self.customer_field, "value", "") or "").strip():
@@ -844,6 +1066,7 @@ class AccountingApp:
                         tooltip="检查更新",
                         on_click=lambda _: self.check_for_updates(),
                     ),
+                    self.cloud_backup_button,
                     ft.IconButton(
                         icon=cast(ft.IconData, ft.Icons.BAR_CHART),
                         icon_color=AppleColors.TEXT_SECONDARY,
@@ -919,7 +1142,7 @@ class AccountingApp:
 
         type_hint = ft.Container(
             content=ft.Text(
-                "每一行都可以单独选择“销售 / 退货”，一张新记录可同时填写销售和退货。",
+                "点击每行的类型按钮切换“销售 / 退货”，一张新记录可同时填写销售和退货。",
                 size=13,
                 color=AppleColors.TEXT_SECONDARY,
             ),
@@ -1295,22 +1518,31 @@ class AccountingApp:
             expand=True,
         )
 
-    def add_item_row(self):
-        """添加商品行"""
-        type_field = ft.Dropdown(
+    def create_item_type_button(self, row_type: str, on_change) -> ft.OutlinedButton:
+        def toggle_type(_):
+            button.data = "return" if button.data == "sale" else "sale"
+            button.content = "退货" if button.data == "return" else "销售"
+            on_change()
+
+        button = ft.OutlinedButton(
+            "退货" if row_type == "return" else "销售",
+            data=row_type,
             width=110,
             height=40,
-            value="sale",
-            border_radius=8,
-            bgcolor=AppleColors.BG_TERTIARY,
-            border_color=AppleColors.BORDER,
-            focused_border_color=AppleColors.PRIMARY,
-            options=[
-                ft.dropdown.Option("sale", "销售"),
-                ft.dropdown.Option("return", "退货"),
-            ],
-            on_select=lambda _: self.update_summary(),
+            tooltip="点击切换销售 / 退货",
+            style=ft.ButtonStyle(
+                color=AppleColors.TEXT_PRIMARY,
+                bgcolor=AppleColors.BG_TERTIARY,
+                side=ft.BorderSide(1, AppleColors.BORDER),
+                shape=ft.RoundedRectangleBorder(radius=8),
+            ),
+            on_click=toggle_type,
         )
+        return button
+
+    def add_item_row(self):
+        """添加商品行"""
+        type_field = self.create_item_type_button("sale", self.update_summary)
 
         qty_field = ft.TextField(
             hint_text="数量",
@@ -1405,7 +1637,7 @@ class AccountingApp:
 
         for row in self.item_rows:
             try:
-                row_type = row["type_field"].value or "sale"
+                row_type = row["type_field"].data or "sale"
                 qty = int(row["qty_field"].value or 0)
                 price = float(row["price_field"].value or 0)
                 subtotal = qty * price
@@ -1448,7 +1680,8 @@ class AccountingApp:
 
         # 清空第一行数据
         if self.item_rows:
-            self.item_rows[0]["type_field"].value = "sale"
+            self.item_rows[0]["type_field"].data = "sale"
+            self.item_rows[0]["type_field"].content = "销售"
             self.item_rows[0]["qty_field"].value = ""
             self.item_rows[0]["price_field"].value = ""
             self.item_rows[0]["subtotal_text"].value = "¥0.00"
@@ -1479,7 +1712,7 @@ class AccountingApp:
             for row in self.item_rows:
                 qty_str = row["qty_field"].value
                 price_str = row["price_field"].value
-                row_type = row["type_field"].value or "sale"
+                row_type = row["type_field"].data or "sale"
 
                 if qty_str and price_str:
                     try:
@@ -2452,6 +2685,7 @@ class AccountingApp:
             info_text,
             customers_field,
             ft.FilledButton("📁 打开数据目录", on_click=open_data_dir),
+            ft.FilledButton("☁ 云端备份", on_click=lambda _: self.show_cloud_backup()),
         ]
         settings_actions: list[ft.Control] = [
             ft.TextButton("关闭", on_click=lambda e: self.page.pop_dialog()),
@@ -2504,7 +2738,7 @@ class AccountingApp:
             return_amount = 0.0
             for row in dlg_item_rows:
                 try:
-                    row_type = row["type_field"].value or "sale"
+                    row_type = row["type_field"].data or "sale"
                     qty = int(row["qty_field"].value or 0)
                     price = float(row["price_field"].value or 0)
                     subtotal = qty * price
@@ -2533,20 +2767,7 @@ class AccountingApp:
             self.page.update()
 
         def add_edit_row(qty: int = 0, price: float = 0.0, row_type: str = "sale"):
-            type_field = ft.Dropdown(
-                width=110,
-                height=40,
-                value=row_type,
-                border_radius=8,
-                bgcolor=AppleColors.BG_TERTIARY,
-                border_color=AppleColors.BORDER,
-                focused_border_color=AppleColors.PRIMARY,
-                options=[
-                    ft.dropdown.Option("sale", "销售"),
-                    ft.dropdown.Option("return", "退货"),
-                ],
-                on_select=lambda _: update_dialog_summary(),
-            )
+            type_field = self.create_item_type_button(row_type, update_dialog_summary)
             qty_field = ft.TextField(
                 hint_text="数量",
                 width=70,
@@ -2617,7 +2838,7 @@ class AccountingApp:
                 for row in dlg_item_rows:
                     qty = int(row["qty_field"].value or 0)
                     price = float(row["price_field"].value or 0)
-                    row_type = row["type_field"].value or "sale"
+                    row_type = row["type_field"].data or "sale"
                     if qty > 0 and price > 0:
                         items.append(
                             {

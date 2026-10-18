@@ -6,6 +6,43 @@ from pathlib import Path
 import auto_updater
 
 
+def test_get_current_version_uses_local_manifest_for_source(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(auto_updater, "is_frozen_app", lambda: False)
+    (tmp_path / "version.json").write_text('{"version": "1.15.9"}', encoding="utf-8")
+    assert auto_updater.get_current_version() == "1.15.9"
+
+
+def test_get_current_version_uses_bundled_manifest_for_exe(monkeypatch, tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "version.json").write_text('{"version": "1.15.9"}', encoding="utf-8")
+    (tmp_path / "version.json").write_text('{"version": "1.15.8"}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(auto_updater, "is_frozen_app", lambda: True)
+    monkeypatch.setattr(auto_updater, "__file__", str(bundle / "auto_updater.py"))
+    assert auto_updater.get_current_version() == "1.15.9"
+
+
+def test_source_update_downloads_cloud_backup_module(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(auto_updater, "is_frozen_app", lambda: False)
+    downloaded = []
+
+    def download(filename, destination):
+        downloaded.append(filename)
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# updated", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(auto_updater, "download_file", download)
+    success, _ = auto_updater.perform_update()
+    assert success
+    assert "app_core/services/cloud_backup.py" in downloaded
+    assert (tmp_path / "app_core/services/cloud_backup.py").read_text(encoding="utf-8") == "# updated"
+
+
 def test_is_frozen_app_reflects_runtime_flag(monkeypatch):
     monkeypatch.setattr(auto_updater.sys, "frozen", True, raising=False)
 

@@ -31,9 +31,14 @@ def is_frozen_app():
 
 def get_current_version():
     """获取当前版本号"""
+    version_file = (
+        os.path.join(os.path.dirname(__file__), LOCAL_VERSION_FILE)
+        if is_frozen_app()
+        else LOCAL_VERSION_FILE
+    )
     try:
-        if os.path.exists(LOCAL_VERSION_FILE):
-            with open(LOCAL_VERSION_FILE, "r", encoding="utf-8") as f:
+        if os.path.exists(version_file):
+            with open(version_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return data.get("version", "1.0.0")
     except:
@@ -296,6 +301,7 @@ def perform_update(callback=None):
             "app_core/services/records.py",
             "app_core/services/importers.py",
             "app_core/services/printer_settings.py",
+            "app_core/services/cloud_backup.py",
         ]
 
         # 创建临时目录
@@ -357,6 +363,7 @@ def perform_update(callback=None):
                 "app_core/services/records.py",
                 "app_core/services/importers.py",
                 "app_core/services/printer_settings.py",
+                "app_core/services/cloud_backup.py",
             ]:
                 backup_file = os.path.join(backup_dir, filename)
                 if os.path.exists(backup_file):
