@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import socket
 import tempfile
 import threading
 import xml.etree.ElementTree as ET
@@ -133,6 +134,23 @@ BACKUP_NAME = re.compile(r"backup-\d{8}T\d{12}Z-[0-9a-f]{8}\.json\Z")
 MAX_BACKUP_BYTES = 50 * 1024 * 1024
 
 
+def validate_backup_identity(value: Any) -> None:
+    try:
+        for key in ("ledger_id", "device_id"):
+            if not isinstance(value[key], str) or not re.fullmatch(r"[0-9a-f]{32}", value[key]):
+                raise ValueError
+        for key in ("ledger_name", "device_name"):
+            name = value[key]
+            if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(char) < 32 for char in name):
+                raise ValueError
+        if "webdav_account" in value and (not isinstance(value["webdav_account"], str) or
+                                          len(value["webdav_account"]) > 255 or
+                                          any(ord(char) < 32 for char in value["webdav_account"])):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise CloudBackupError("账本或来源电脑信息无效，请检查名称和编号。") from None
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Credentials must never follow a server redirect.
@@ -152,7 +170,7 @@ class WebDAVClient:
     def request(self, method: str, name: str = "", *, content: bytes | None = None,
                 headers: dict[str, str] | None = None, accepted: tuple[int, ...] = (200,),
                 limit: int = MAX_BACKUP_BYTES) -> bytes:
-        if name and not BACKUP_NAME.fullmatch(name):
+        if name and not BACKUP_NAME.fullmatch(name.removesuffix(".meta.json")):
             raise CloudBackupError("备份文件名无效。")
         request = Request(self.directory + name, data=content, method=method,
                           headers={"Authorization": self.authorization, **(headers or {})})
@@ -262,6 +280,8 @@ def validate_data(data: Any) -> None:
             raise ValueError
         if "customers" in settings and (not isinstance(settings["customers"], list) or any(not isinstance(name, str) for name in settings["customers"])):
             raise ValueError
+        if "backup_identity" in data:
+            validate_backup_identity(data["backup_identity"])
     except (KeyError, TypeError, ValueError, OverflowError):
         raise CloudBackupError("备份中的账目或设置格式无效，未修改本地数据。") from None
 
@@ -271,6 +291,30 @@ class CloudBackupService:
         self.data_dir = data_dir
         self.settings = CloudBackupSettingsStore(data_dir)
         self._lock = threading.Lock()
+        self._identity_lock = threading.RLock()
+
+    def identity(self) -> dict[str, str]:
+        with self._identity_lock:
+            path = self.data_dir / "backup_identity.json"
+            try:
+                if path.exists():
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    validate_backup_identity(value)
+                else:
+                    value = {"ledger_id": uuid4().hex, "ledger_name": "我的账本",
+                             "device_id": uuid4().hex, "device_name": socket.gethostname() or "本机"}
+                    validate_backup_identity(value)
+                    atomic_write(path, json_bytes(value))
+            except (OSError, ValueError, CloudBackupError):
+                raise CloudBackupError("本地账本身份无法读取或保存，已停止操作；请保留 backup_identity.json 后检查文件。") from None
+            return {key: value[key] for key in ("ledger_id", "ledger_name", "device_id", "device_name")}
+
+    def save_identity(self, ledger_name: str, device_name: str) -> dict[str, str]:
+        with self._identity_lock:
+            value = {**self.identity(), "ledger_name": ledger_name.strip(), "device_name": device_name.strip()}
+            validate_backup_identity(value)
+            atomic_write(self.data_dir / "backup_identity.json", json_bytes(value))
+            return value
 
     def state(self) -> dict[str, Any]:
         try:
@@ -295,6 +339,8 @@ class CloudBackupService:
             settings = self.settings.load()
             client = WebDAVClient(settings)
             data = self.read_local_data()
+            data["backup_identity"] = {**self.identity(), "webdav_account": settings["username"]}
+            validate_backup_identity(data["backup_identity"])
             digest = hashlib.sha256(json_bytes(data)).hexdigest()
             target = hashlib.sha256((client.directory + settings["username"]).encode("utf-8")).hexdigest()
             previous = self.state()
@@ -306,22 +352,39 @@ class CloudBackupService:
             if len(payload) > MAX_BACKUP_BYTES:
                 raise CloudBackupError("本地数据超过 50 MB，无法使用当前备份功能。")
             name = f"backup-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{uuid4().hex[:8]}.json"
+            summary = json_bytes({"backup": name, "backup_identity": data["backup_identity"],
+                                  "record_count": len(data["records"])})
             client.ensure_directory()
-            client.request("PUT", name, content=payload,
-                           headers={"Content-Type": "application/json; charset=utf-8", "If-None-Match": "*"},
-                           accepted=(201, 204))
-            downloaded = client.request("GET", name)
-            if downloaded != payload:
-                raise CloudBackupError("云端备份校验失败，请重新备份。")
+            # 历史列表读取小型来源索引，避免下载每份完整账本。
+            for remote_name, content in ((name, payload), (name + ".meta.json", summary)):
+                client.request("PUT", remote_name, content=content,
+                               headers={"Content-Type": "application/json; charset=utf-8", "If-None-Match": "*"},
+                               accepted=(201, 204))
+                if client.request("GET", remote_name) != content:
+                    raise CloudBackupError("云端备份或来源索引校验失败，请重新备份。")
             atomic_write(self.data_dir / "cloud_backup_state.json", json_bytes({
                 "last_backup": now.astimezone().strftime("%Y-%m-%d %H:%M:%S"), "name": name,
                 "digest": digest, "target": target}))
             return name
 
-    def list_backups(self) -> list[str]:
+    def list_backups(self) -> list[dict[str, Any]]:
         client = WebDAVClient(self.settings.load())
         client.ensure_directory()
-        return client.list_backups()
+        backups = []
+        for name in client.list_backups():
+            info: dict[str, Any] = {"name": name}
+            body = client.request("GET", name + ".meta.json", accepted=(200, 404), limit=16 * 1024)
+            if body:
+                try:
+                    summary = json.loads(body)
+                    if summary["backup"] != name or type(summary["record_count"]) is not int or summary["record_count"] < 0:
+                        raise ValueError
+                    validate_backup_identity(summary["backup_identity"])
+                    info.update({key: summary[key] for key in ("backup_identity", "record_count")})
+                except (ValueError, KeyError, TypeError, CloudBackupError):
+                    info["metadata_error"] = True
+            backups.append(info)
+        return backups
 
     def download(self, name: str) -> dict[str, Any]:
         body = WebDAVClient(self.settings.load()).request("GET", name)
@@ -344,14 +407,18 @@ class CloudBackupService:
             safety_dir = self.data_dir / "backups" / ("before-restore-" + timestamp)
             safety_dir.mkdir(parents=True)
             originals = {}
-            for name in ("records.json", "printer_settings.json"):
+            for name in ("records.json", "printer_settings.json", "backup_identity.json"):
                 path = self.data_dir / name
                 originals[name] = path.read_bytes() if path.exists() else None
                 if originals[name] is not None:
                     atomic_write(safety_dir / name, originals[name])
             try:
+                identity = self.identity()
+                if "backup_identity" in data:
+                    identity.update({key: data["backup_identity"][key] for key in ("ledger_id", "ledger_name")})
                 atomic_write(self.data_dir / "records.json", json_bytes(data["records"]))
                 atomic_write(self.data_dir / "printer_settings.json", json_bytes(data["printer_settings"]))
+                atomic_write(self.data_dir / "backup_identity.json", json_bytes(identity))
             except OSError:
                 try:
                     for name, content in originals.items():

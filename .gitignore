@@ -2,6 +2,7 @@
 records.json
 cloud_backup.json
 cloud_backup_state.json
+backup_identity.json
 backups/
 
 # Python

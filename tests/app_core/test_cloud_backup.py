@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -141,13 +142,15 @@ def test_normalizes_unicode_directory():
 def test_backup_versions_deduplication_and_restore(service, dav):
     first = service.backup()
     assert cloud.BACKUP_NAME.fullmatch(first)
-    assert service.download(first) == DATA
+    downloaded = service.download(first)
+    assert {key: downloaded[key] for key in DATA} == DATA
+    assert downloaded["backup_identity"] == {**service.identity(), "webdav_account": "backup-user"}
     count = len(dav.requests)
     assert service.backup(force=False) is None
     assert len(dav.requests) == count
     second = service.backup()
     assert second != first
-    assert service.list_backups() == sorted([first, second], reverse=True)
+    assert [info["name"] for info in service.list_backups()] == sorted([first, second], reverse=True)
     for method, _, headers in dav.requests:
         if method == "PUT":
             assert headers["If-None-Match"] == "*"
@@ -213,7 +216,7 @@ def test_directory_listing_rejects_foreign_hrefs_and_invalid_xml(service, dav):
     foreign = "backup-20260101T120000000000Z-12345678.json"
     dav.extra_hrefs = [f"https://other.invalid/dav/textile-accounting/{foreign}",
                        f"/other/{foreign}", f"/dav/textile-accounting/sub/{foreign}"]
-    assert service.list_backups() == [name]
+    assert [info["name"] for info in service.list_backups()] == [name]
     dav.xml = b'<!DOCTYPE x [<!ENTITY x "bad">]><d:multistatus xmlns:d="DAV:"/>'
     with pytest.raises(cloud.CloudBackupError):
         service.list_backups()
@@ -266,3 +269,144 @@ def test_response_size_limit(service, dav):
     with pytest.raises(cloud.CloudBackupError, match="过大"):
         client.request("GET", name, limit=10)
     assert urlsplit(client.directory).hostname == "127.0.0.1"
+
+
+def test_identity_is_stable_and_renaming_triggers_backup(service, dav):
+    original = service.identity()
+    assert cloud.CloudBackupService(service.data_dir).identity() == original
+    first = service.backup()
+    changed = service.save_identity(" 门店账本 ", " 前台电脑 ")
+    assert changed == {**original, "ledger_name": "门店账本", "device_name": "前台电脑"}
+    second = service.backup(force=False)
+    assert second not in (None, first)
+    assert service.backup(force=False) is None
+    assert service.download(second)["backup_identity"]["ledger_id"] == original["ledger_id"]
+
+
+@pytest.mark.parametrize("ledger,device", [("", "电脑"), ("账本", "  "), ("账本\n其他", "电脑"), ("账" * 81, "电脑")])
+def test_identity_names_are_validated(service, ledger, device):
+    original = service.identity()
+    with pytest.raises(cloud.CloudBackupError):
+        service.save_identity(ledger, device)
+    assert service.identity() == original
+
+
+def test_corrupt_local_identity_is_preserved_and_stops_upload(service, dav):
+    path = service.data_dir / "backup_identity.json"
+    path.write_bytes(b"broken identity")
+    with pytest.raises(cloud.CloudBackupError, match="账本身份"):
+        service.backup()
+    assert not dav.requests
+    assert path.read_bytes() == b"broken identity"
+
+
+def test_identity_fields_remain_accessible_while_backup_is_busy(service):
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with service._lock:
+            identity = pool.submit(service.save_identity, "门店账本", "前台电脑").result(timeout=2)
+    assert identity["ledger_name"] == "门店账本"
+    assert service.identity() == identity
+
+
+def test_history_reads_small_summaries_and_marks_damaged_index(service, dav):
+    service.save_identity("门店账本", "前台电脑")
+    name = service.backup()
+    dav.requests.clear()
+    info, = service.list_backups()
+    assert info["record_count"] == 1
+    assert info["backup_identity"]["ledger_name"] == "门店账本"
+    assert info["backup_identity"]["device_name"] == "前台电脑"
+    assert all(method != "GET" or path.endswith(".meta.json") for method, path, _ in dav.requests)
+    dav.files[name + ".meta.json"] = b"damaged index"
+    assert service.list_backups() == [{"name": name, "metadata_error": True}]
+    assert service.download(name)["backup_identity"]["ledger_name"] == "门店账本"
+
+
+def test_restore_on_another_computer_keeps_device_and_login(service, dav, tmp_path):
+    service.save_identity("门店账本", "旧电脑")
+    name = service.backup()
+    origin = service.identity()
+    other = cloud.CloudBackupService(tmp_path / "other-computer")
+    other.save_identity("新账本", "新电脑")
+    local = other.identity()
+    other.settings.save({"url": "https://other.example/dav/", "username": "another-user",
+                         "password": "different-password", "auto_backup": False})
+    login = other.settings.load()
+    safety = other.restore(service.download(name))
+    assert other.identity() == {**local, "ledger_id": origin["ledger_id"], "ledger_name": origin["ledger_name"]}
+    assert other.settings.load() == login
+    assert other.read_local_data() == DATA
+    assert json.loads((safety / "backup_identity.json").read_bytes()) == local
+
+
+def test_legacy_backup_can_be_identified_as_unknown_and_restored(service, dav):
+    name = "backup-20260101T120000000000Z-12345678.json"
+    dav.files[name] = cloud.json_bytes({"app": "textile-accounting", "version": 1,
+                                       "created_at": "2026-01-01T12:00:00+00:00", "data": DATA,
+                                       "sha256": cloud.hashlib.sha256(cloud.json_bytes(DATA)).hexdigest()})
+    identity = service.save_identity("保留名称", "本机")
+    assert service.list_backups() == [{"name": name}]
+    assert service.download(name) == DATA
+    service.restore(service.download(name))
+    assert service.read_local_data() == DATA
+    assert service.identity() == identity
+
+
+@pytest.mark.parametrize("key,value", [("ledger_id", "../another"), ("device_name", []), ("ledger_name", ""),
+                                      ("webdav_account", "user\nother")])
+def test_invalid_source_metadata_is_rejected_before_restore(service, dav, key, value):
+    name = service.backup()
+    payload = json.loads(dav.files[name])
+    payload["data"]["backup_identity"][key] = value
+    payload["sha256"] = cloud.hashlib.sha256(cloud.json_bytes(payload["data"])).hexdigest()
+    dav.files[name] = cloud.json_bytes(payload)
+    identity = service.identity()
+    with pytest.raises(cloud.CloudBackupError):
+        service.download(name)
+    with pytest.raises(cloud.CloudBackupError):
+        service.restore(payload["data"])
+    assert service.identity() == identity
+    assert service.read_local_data() == DATA
+    assert not (service.data_dir / "backups").exists()
+
+
+def test_failed_identity_restore_rolls_back_data_and_identity(service, monkeypatch):
+    identity_path = service.data_dir / "backup_identity.json"
+    original = service.identity()
+    changed = copy.deepcopy(DATA)
+    changed["records"][0]["note"] = "云端内容"
+    changed["backup_identity"] = {**original, "ledger_id": "1" * 32, "ledger_name": "云端账本"}
+    original_bytes = identity_path.read_bytes()
+    write = cloud.atomic_write
+    failed = False
+
+    def fail_once(path, content):
+        nonlocal failed
+        if path == identity_path and not failed:
+            failed = True
+            raise OSError("simulated identity write failure")
+        write(path, content)
+
+    monkeypatch.setattr(cloud, "atomic_write", fail_once)
+    with pytest.raises(cloud.CloudBackupError, match="已还原"):
+        service.restore(changed)
+    assert service.read_local_data() == DATA
+    assert identity_path.read_bytes() == original_bytes
+    assert next((service.data_dir / "backups").glob("*/backup_identity.json")).read_bytes() == original_bytes
+
+
+def test_failed_index_upload_keeps_backup_but_does_not_mark_success(service, dav, monkeypatch):
+    request = cloud.WebDAVClient.request
+
+    def fail_index(self, method, name="", **kwargs):
+        if method == "PUT" and name.endswith(".meta.json"):
+            raise cloud.CloudBackupError("来源索引上传失败")
+        return request(self, method, name, **kwargs)
+
+    monkeypatch.setattr(cloud.WebDAVClient, "request", fail_index)
+    with pytest.raises(cloud.CloudBackupError):
+        service.backup()
+    assert service.state() == {}
+    name, = dav.files
+    assert service.download(name)["records"] == DATA["records"]
+    assert service.list_backups() == [{"name": name}]

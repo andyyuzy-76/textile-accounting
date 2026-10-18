@@ -15,7 +15,7 @@ import csv
 import threading
 import time
 import ctypes
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -58,7 +58,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.9"
+VERSION = "1.15.10"
 
 
 class AccountingApp:
@@ -238,15 +238,27 @@ class AccountingApp:
 
     def show_cloud_backup(self):
         settings = self.cloud_backup.settings.load()
+        try:
+            identity = self.cloud_backup.identity()
+        except CloudBackupError as ex:
+            self.show_error(str(ex))
+            return
         url_field = ft.TextField(label="WebDAV 地址", value=settings["url"],
                                  hint_text="https://你的网盘地址/dav/", border_radius=10)
-        username_field = ft.TextField(label="账号", value=settings["username"], border_radius=10)
+        username_field = ft.TextField(label="NAS / WebDAV 账号", value=settings["username"], border_radius=10)
         password_field = ft.TextField(label="WebDAV 应用密码", value=settings["password"],
                                      password=True, can_reveal_password=True, border_radius=10)
+        ledger_field = ft.TextField(label="账本名称", value=identity["ledger_name"], max_length=80, border_radius=10)
+        device_field = ft.TextField(label="本机名称", value=identity["device_name"], max_length=80, border_radius=10)
+        ledger_number = ft.Text(f"账本编号：{identity['ledger_id']}", size=12, selectable=True,
+                                color=AppleColors.TEXT_SECONDARY)
         auto_switch = ft.Switch(label="保存账目或设置后自动备份", value=settings["auto_backup"])
         status = ft.Text(settings.get("error") or "填写网盘信息后，可先测试连接。", color=AppleColors.TEXT_SECONDARY)
         last_backup = ft.Text("", size=12, color=AppleColors.TEXT_SECONDARY)
         backup_list = ft.Dropdown(label="云端历史备份", options=[], expand=True)
+        backup_details = ft.Text("选择备份后显示账本和来源信息。", size=12, selectable=True,
+                                 color=AppleColors.TEXT_SECONDARY)
+        history = {}
         progress = ft.ProgressBar(visible=False)
         close_button = ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())
         save_button = ft.FilledButton("保存设置")
@@ -254,7 +266,7 @@ class AccountingApp:
         upload_button = ft.FilledButton("立即备份")
         list_button = ft.TextButton("刷新历史")
         restore_button = ft.TextButton("恢复所选备份", disabled=True)
-        fields = [url_field, username_field, password_field, auto_switch]
+        fields = [url_field, username_field, password_field, ledger_field, device_field, auto_switch]
         buttons = [close_button, save_button, test_button, upload_button, list_button, restore_button, backup_list]
         self._cloud_backup_busy = False
 
@@ -266,13 +278,42 @@ class AccountingApp:
             return {"url": str(url_field.value or ""), "username": str(username_field.value or ""),
                     "password": str(password_field.value or ""), "auto_backup": bool(auto_switch.value)}
 
+        def update_identity():
+            current = self.cloud_backup.identity()
+            ledger_field.value = current["ledger_name"]
+            device_field.value = current["device_name"]
+            ledger_number.value = f"账本编号：{current['ledger_id']}"
+
+        def describe_backup(info):
+            name = info["name"]
+            try:
+                timestamp = datetime.strptime(name[7:29], "%Y%m%dT%H%M%S%fZ").replace(tzinfo=timezone.utc)
+                saved_time = timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                saved_time = "时间未知"
+            source = info.get("backup_identity")
+            if not source:
+                reason = "来源索引损坏，恢复前将重新核对备份内容。" if info.get("metadata_error") else "未记录来源信息；旧版备份仍可恢复。"
+                return f"{saved_time}｜来源未记录", f"备份时间：{saved_time}\n{reason}"
+            count = info["record_count"]
+            label = f"{saved_time}｜{source['ledger_name']}｜{source['device_name']}｜{count} 条"
+            details = (f"账本：{source['ledger_name']}\n账本编号：{source['ledger_id']}\n"
+                       f"来源电脑：{source['device_name']}\n电脑编号：{source['device_id']}\n"
+                       f"备份使用的 NAS 账号：{source.get('webdav_account') or '未记录'}\n"
+                       f"备份时间：{saved_time}\n记录数量：{count} 条")
+            return label, details
+
         def save_configuration():
+            self.cloud_backup.save_identity(str(ledger_field.value or ""), str(device_field.value or ""))
             value = self.cloud_backup.settings.save(current_settings())
             url_field.value = value["url"]
             username_field.value = value["username"]
             self._backup_generation += 1
+            update_identity()
+            history.clear()
             backup_list.options = []
             backup_list.value = None
+            backup_details.value = "选择备份后显示账本和来源信息。"
             restore_button.disabled = True
             return value
 
@@ -323,10 +364,12 @@ class AccountingApp:
                     status.value = "备份成功，已从云端下载并核对内容。"
                     update_last_backup()
                 else:
-                    names = await asyncio.to_thread(self.cloud_backup.list_backups)
-                    backup_list.options = [ft.dropdown.Option(name) for name in names]
-                    backup_list.value = names[0] if names else None
-                    status.value = f"找到 {len(names)} 份云端备份。" if names else "云端还没有备份，请先点击立即备份。"
+                    backups = await asyncio.to_thread(self.cloud_backup.list_backups)
+                    history.update({info["name"]: info for info in backups})
+                    backup_list.options = [ft.dropdown.Option(info["name"], describe_backup(info)[0]) for info in backups]
+                    backup_list.value = backups[0]["name"] if backups else None
+                    backup_details.value = describe_backup(backups[0])[1] if backups else "云端还没有备份。"
+                    status.value = f"找到 {len(backups)} 份云端备份。" if backups else "云端还没有备份，请先点击立即备份。"
                 status.color = AppleColors.SUCCESS
                 self.set_cloud_backup_status(str(status.value))
             except Exception as ex:
@@ -339,8 +382,16 @@ class AccountingApp:
             name = backup_list.value
             if not name or self._cloud_backup_busy:
                 return
-            if current_settings() != self.cloud_backup.settings.load():
-                status.value = "网盘设置已改变，请先刷新历史备份。"
+            try:
+                current = self.cloud_backup.identity()
+                saved_settings = self.cloud_backup.settings.load()
+            except Exception as ex:
+                show_failure(ex)
+                self.page.update()
+                return
+            if (current_settings() != saved_settings or
+                    ledger_field.value != current["ledger_name"] or device_field.value != current["device_name"]):
+                status.value = "网盘或账本信息已改变，请先刷新历史备份。"
                 self.page.update()
                 return
             self._backup_generation += 1
@@ -361,6 +412,7 @@ class AccountingApp:
                 self.page.update()
                 try:
                     safety_dir = await asyncio.to_thread(self.cloud_backup.restore, data)
+                    update_identity()
                     self.load_records()
                     self.load_printer_settings()
                     self.refresh_customer_dropdown()
@@ -381,9 +433,15 @@ class AccountingApp:
 
             confirm_button = ft.FilledButton("确认恢复", on_click=confirm_restore)
             cancel_button = ft.TextButton("取消", on_click=cancel_restore)
+            source_details = describe_backup({"name": name, "backup_identity": data.get("backup_identity"),
+                                               "record_count": len(data["records"])})[1]
+            adoption = ("恢复后沿用备份中的账本编号，本机名称和 NAS 登录配置保留。" if data.get("backup_identity") else
+                        "此备份未记录账本归属；恢复后使用当前账本名称和编号。")
             self.page.show_dialog(ft.AlertDialog(
-                modal=True, title=ft.Text("确认恢复云端备份"),
-                content=ft.Text(f"将用所选备份的 {len(data['records'])} 条账目、客户列表和打印设置替换当前数据。\n\n恢复前会保留本地原始文件副本。"),
+                modal=True, scrollable=True, title=ft.Text("确认恢复云端备份"),
+                content=ft.Text(f"当前账本：{current['ledger_name']}（{current['ledger_id']}）\n\n{source_details}\n\n"
+                                f"将用所选备份的 {len(data['records'])} 条账目、客户列表和打印设置替换当前数据。\n"
+                                f"{adoption}\n恢复前会保留本地原始文件副本。", selectable=True),
                 actions=[cancel_button, confirm_button],
             ))
 
@@ -394,6 +452,8 @@ class AccountingApp:
         restore_button.on_click = lambda _: self.page.run_task(prepare_restore)
         def select_backup(_):
             restore_button.disabled = not backup_list.value
+            if backup_list.value in history:
+                backup_details.value = describe_backup(history[backup_list.value])[1]
             self.page.update()
 
         backup_list.on_select = select_backup
@@ -401,9 +461,9 @@ class AccountingApp:
         self.page.show_dialog(ft.AlertDialog(
             modal=True, title=ft.Text("☁ 云端备份", weight=ft.FontWeight.BOLD),
             content=ft.Container(width=540, content=ft.Column(
-                controls=[ft.Text("支持 WebDAV 网盘。备份包含账目、客户列表和打印设置。", size=13),
-                          *fields, ft.Row([test_button, upload_button]), progress, status, last_backup,
-                          ft.Divider(), ft.Row([backup_list, list_button]), restore_button,
+                controls=[ft.Text("NAS 账号管理访问权限；账本编号识别同一套账目，本机名称标明备份来源。", size=13),
+                          *fields, ledger_number, ft.Row([test_button, upload_button]), progress, status, last_backup,
+                          ft.Divider(), ft.Row([backup_list, list_button]), backup_details, restore_button,
                           ft.Text("开启自动备份后，每次保存约 5 秒后备份，连续保存会合并；断网后在下次保存或启动时重试。\n备份为 JSON 文件，请使用私有网盘；历史版本可在网盘中清理。", size=12, color=AppleColors.TEXT_SECONDARY)],
                 tight=True, spacing=12, scroll=ft.ScrollMode.AUTO, height=560,
             )), actions=[close_button, save_button],
