@@ -125,6 +125,60 @@ def test_settings_round_trip_and_corrupt_password_disables_auto_backup(service):
     assert "error" in service.settings.load()
 
 
+@pytest.mark.parametrize("username", ["backup\nuser", "x" * 256])
+def test_invalid_account_is_rejected_before_saving_or_uploading(service, dav, username):
+    original = service.settings.path.read_bytes()
+    identity = service.identity()
+    with pytest.raises(cloud.CloudBackupError, match="NAS / WebDAV 账号"):
+        service.settings.save({**service.settings.load(), "username": username})
+    assert service.settings.path.read_bytes() == original
+
+    saved = json.loads(original)
+    saved["username"] = username
+    service.settings.path.write_bytes(cloud.json_bytes(saved))
+    with pytest.raises(cloud.CloudBackupError, match="NAS / WebDAV 账号"):
+        service.backup()
+    assert not dav.requests
+    assert service.identity() == identity
+    assert service.read_local_data() == DATA
+
+
+@pytest.mark.parametrize("key,value,label", [
+    ("ledger_id", "invalid", "账本编号"),
+    ("device_id", None, "电脑编号"),
+    ("ledger_name", "", "账本名称"),
+    ("device_name", "办公\n电脑", "本机名称"),
+    ("webdav_account", "backup\nuser", "NAS / WebDAV 账号"),
+    ("webdav_account", [], "NAS / WebDAV 账号"),
+])
+def test_identity_validation_reports_the_invalid_field(service, key, value, label):
+    with pytest.raises(cloud.CloudBackupError, match=label):
+        cloud.validate_backup_identity({**service.identity(), key: value})
+
+
+@pytest.mark.parametrize("value", [None, [], "invalid", {}])
+def test_invalid_identity_structure_raises_a_backup_error(value):
+    with pytest.raises(cloud.CloudBackupError, match="账本"):
+        cloud.validate_backup_identity(value)
+
+
+@pytest.mark.parametrize("account", ["", "x" * 255])
+def test_identity_accepts_legacy_account_metadata_and_boundary_lengths(service, account):
+    identity = {**service.identity(), "ledger_name": "账" * 80, "device_name": "机" * 80,
+                "webdav_account": account}
+    cloud.validate_backup_identity(identity)
+
+
+def test_invalid_local_identity_reports_the_field_and_preserves_the_file(service, dav):
+    path = service.data_dir / "backup_identity.json"
+    cloud.atomic_write(path, cloud.json_bytes({**service.identity(), "device_id": "invalid"}))
+    original = path.read_bytes()
+    with pytest.raises(cloud.CloudBackupError, match="电脑编号"):
+        service.backup()
+    assert path.read_bytes() == original
+    assert not dav.requests
+
+
 @pytest.mark.parametrize("url", ["http://example.com/dav", "https://user:secret@example.com/",
                                   "https://example.com/?key=secret", "https://example.com/#x",
                                   "https://example.com:bad/", "https://example.com:/",

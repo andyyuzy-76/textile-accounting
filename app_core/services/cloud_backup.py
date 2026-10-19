@@ -88,6 +88,11 @@ def normalize_url(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc.lower(), path, "", ""))
 
 
+def validate_webdav_account(value: Any) -> None:
+    if not isinstance(value, str) or len(value) > 255 or any(ord(char) < 32 for char in value):
+        raise CloudBackupError("NAS / WebDAV 账号格式无效：最多 255 个字符，不能包含换行等控制字符。")
+
+
 class CloudBackupSettingsStore:
     def __init__(self, data_dir: Path):
         self.path = data_dir / "cloud_backup.json"
@@ -120,6 +125,7 @@ class CloudBackupSettingsStore:
         automatic = bool(settings.get("auto_backup", False))
         if url:
             url = normalize_url(url)
+        validate_webdav_account(username)
         if ":" in username:
             raise CloudBackupError("WebDAV 账号不能包含冒号。")
         if automatic and not all((url, username, password)):
@@ -135,20 +141,18 @@ MAX_BACKUP_BYTES = 50 * 1024 * 1024
 
 
 def validate_backup_identity(value: Any) -> None:
-    try:
-        for key in ("ledger_id", "device_id"):
-            if not isinstance(value[key], str) or not re.fullmatch(r"[0-9a-f]{32}", value[key]):
-                raise ValueError
-        for key in ("ledger_name", "device_name"):
-            name = value[key]
-            if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(char) < 32 for char in name):
-                raise ValueError
-        if "webdav_account" in value and (not isinstance(value["webdav_account"], str) or
-                                          len(value["webdav_account"]) > 255 or
-                                          any(ord(char) < 32 for char in value["webdav_account"])):
-            raise ValueError
-    except (KeyError, TypeError, ValueError):
-        raise CloudBackupError("账本或来源电脑信息无效，请检查名称和编号。") from None
+    if not isinstance(value, dict):
+        raise CloudBackupError("账本和来源电脑信息应为有效的 JSON 对象。")
+    for key, label in (("ledger_id", "账本编号"), ("device_id", "电脑编号")):
+        identifier = value.get(key)
+        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}", identifier):
+            raise CloudBackupError(f"{label}格式无效，应为 32 位小写十六进制字符。")
+    for key, label in (("ledger_name", "账本名称"), ("device_name", "本机名称")):
+        name = value.get(key)
+        if not isinstance(name, str) or not name.strip() or len(name) > 80 or any(ord(char) < 32 for char in name):
+            raise CloudBackupError(f"{label}无效：请填写 1–80 个字符，不能包含换行等控制字符。")
+    if "webdav_account" in value:
+        validate_webdav_account(value["webdav_account"])
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -162,6 +166,7 @@ class WebDAVClient:
         self.directory = normalize_url(settings.get("url", "")) + "textile-accounting/"
         username = str(settings.get("username", ""))
         password = str(settings.get("password", ""))
+        validate_webdav_account(username)
         if not username or not password or ":" in username:
             raise CloudBackupError("请填写有效的账号和 WebDAV 应用密码。")
         self.authorization = "Basic " + base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
@@ -305,7 +310,9 @@ class CloudBackupService:
                              "device_id": uuid4().hex, "device_name": socket.gethostname() or "本机"}
                     validate_backup_identity(value)
                     atomic_write(path, json_bytes(value))
-            except (OSError, ValueError, CloudBackupError):
+            except CloudBackupError as error:
+                raise CloudBackupError(f"本地账本身份校验失败：{error} 请保留 backup_identity.json 后检查文件。") from None
+            except (OSError, ValueError):
                 raise CloudBackupError("本地账本身份无法读取或保存，已停止操作；请保留 backup_identity.json 后检查文件。") from None
             return {key: value[key] for key in ("ledger_id", "ledger_name", "device_id", "device_name")}
 

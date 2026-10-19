@@ -58,7 +58,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.11"
+VERSION = "1.15.12"
 
 
 class AccountingApp:

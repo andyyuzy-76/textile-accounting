@@ -142,6 +142,22 @@ def test_upload_failure_is_visible_and_unlocks_controls(app, monkeypatch):
     assert app.cloud_backup_button.icon_color == ui.AppleColors.WARNING
 
 
+def test_invalid_account_reports_account_error_in_the_dialog(app):
+    app.show_cloud_backup()
+    controls = dialog_controls(app)
+    configure(controls)
+    identity = app.cloud_backup.identity()
+    controls.username.value = "backup\nuser"
+    controls.save.on_click(None)
+    assert "NAS / WebDAV 账号" in controls.status.value
+    assert controls.status.color == ui.AppleColors.DANGER
+    controls.upload.on_click(None)
+    app.page.run_pending()
+    assert "NAS / WebDAV 账号" in controls.status.value
+    assert controls.upload.disabled is False
+    assert app.cloud_backup.identity() == identity
+
+
 def test_auto_backup_runs_latest_save_only_and_reports_failure(app, monkeypatch):
     monkeypatch.setattr(app.cloud_backup.settings, "load", lambda: {"auto_backup": True})
     calls = []
