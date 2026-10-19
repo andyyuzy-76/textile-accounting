@@ -6,13 +6,18 @@
 import os
 import json
 import hashlib
+import base64
+from contextlib import suppress
 import urllib.request
 import urllib.error
 import tempfile
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
+
+from app_core.paths import ensure_data_dir
 
 # GitHub仓库信息
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
@@ -22,6 +27,68 @@ GITHUB_RELEASE_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/l
 
 # 本地版本文件路径
 LOCAL_VERSION_FILE = "version.json"
+
+BINARY_UPDATE_SCRIPT = r'''param([string]$ConfigPath)
+$ErrorActionPreference = 'Stop'
+$env:PSModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules')
+$jobDir = [System.IO.Path]::GetDirectoryName($ConfigPath)
+$logPath = Join-Path $jobDir 'update.log'
+$replaced = $false
+function Write-Log([string]$message) {
+    Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) $message" -Encoding UTF8 -ErrorAction SilentlyContinue
+}
+try {
+    $job = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ((Get-FileHash -LiteralPath $job.staged -Algorithm SHA256).Hash -ne $job.sha256) {
+        throw '待安装文件校验失败，原程序未更改。'
+    }
+    Write-Log "等待程序退出：$($job.target)"
+    [System.IO.File]::WriteAllText((Join-Path $jobDir 'ready'), 'ready')
+    $owner = Get-Process -Id $job.owner_pid -ErrorAction SilentlyContinue
+    if ($owner) { $owner | Wait-Process -Timeout 60 -ErrorAction Stop }
+    $deadline = (Get-Date).AddSeconds(60)
+    while ($true) {
+        try {
+            [System.IO.File]::Replace($job.staged, $job.target, $job.backup)
+            $replaced = $true
+            break
+        } catch [System.IO.IOException] {
+            if ((Get-Date) -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if ((Get-FileHash -LiteralPath $job.target -Algorithm SHA256).Hash -ne $job.sha256) {
+        throw '替换后文件校验失败。'
+    }
+    $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $job.target
+    $start.WorkingDirectory = [System.IO.Path]::GetDirectoryName($job.target)
+    $start.UseShellExecute = $false
+    $app = [System.Diagnostics.Process]::Start($start)
+    # shortcut: 仅检测三秒内的启动失败，需要确认界面就绪时再增加握手。
+    if ($app.WaitForExit(3000) -and $app.ExitCode -ne 0) {
+        throw "新版启动失败，退出码：$($app.ExitCode)"
+    }
+    Write-Log "更新完成，已启动：$($job.target)"
+    Remove-Item -LiteralPath $job.backup -Force -ErrorAction SilentlyContinue
+} catch {
+    $message = "更新失败：$($_.Exception.Message)"
+    if ($replaced) {
+        try {
+            [System.IO.File]::Replace($job.backup, $job.target, [NullString]::Value)
+            $message += "`n已恢复旧程序。"
+        } catch {
+            $message += "`n自动回退失败：$($_.Exception.Message)`n旧程序保留在：$($job.backup)"
+        }
+    }
+    $message += "`n更新包目录：$jobDir`n日志：$logPath"
+    Write-Log $message
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show($message, '家纺记账更新失败') | Out-Null
+    exit 1
+}
+'''
 
 
 def is_frozen_app():
@@ -174,6 +241,12 @@ def perform_binary_update(callback=None):
         return False, "无法获取远程版本信息"
 
     asset_name = manifest.get("exe_asset_name", "家纺记账系统-苹果风格.exe")
+    if (
+        not isinstance(asset_name, str)
+        or os.path.basename(asset_name) != asset_name
+        or not asset_name.lower().endswith(".exe")
+    ):
+        return False, "更新包文件名无效"
     asset_info = get_release_asset_info(asset_name)
     if not asset_info:
         return False, f"未找到发布资产: {asset_name}"
@@ -181,52 +254,100 @@ def perform_binary_update(callback=None):
     expected_size = asset_info.get("size")
     expected_digest = asset_info.get("digest")
 
-    current_exe = sys.executable
+    current_exe = os.path.abspath(sys.executable)
     if not current_exe.lower().endswith(".exe"):
         return False, "当前不是 exe 运行环境"
 
-    app_dir = os.path.dirname(current_exe)
-    temp_dir = tempfile.mkdtemp()
-    downloaded_exe = os.path.join(temp_dir, asset_name)
-    updater_bat = os.path.join(temp_dir, "apply_update.bat")
+    job_dir = None
+    staged_exe = None
+    helper = None
+    try:
+        update_dir = ensure_data_dir() / "update"
+        update_dir.mkdir(exist_ok=True)
+        job_dir = tempfile.mkdtemp(prefix="pending-", dir=update_dir)
+        downloaded_exe = os.path.join(job_dir, asset_name)
+        if callback:
+            callback(f"正在下载软件更新包...\n保存位置：{downloaded_exe}")
+        if not download_url(asset_url, downloaded_exe):
+            raise OSError("下载更新包失败")
+        if callback:
+            callback("正在校验更新包...")
+        verified, verify_message = verify_downloaded_file(
+            downloaded_exe, expected_size=expected_size, expected_digest=expected_digest
+        )
+        if not verified:
+            os.remove(downloaded_exe)
+            raise OSError(verify_message)
 
-    if callback:
-        callback("正在下载软件更新包...")
-    if not download_url(asset_url, downloaded_exe):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return False, "下载更新包失败"
-
-    if callback:
-        callback("正在校验更新包...")
-    verified, verify_message = verify_downloaded_file(
-        downloaded_exe,
-        expected_size=expected_size,
-        expected_digest=expected_digest,
-    )
-    if not verified:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return False, verify_message
-
-    script = f"""@echo off
-chcp 65001 >nul
-set EXE_PATH={current_exe}
-set NEW_EXE={downloaded_exe}
-ping 127.0.0.1 -n 3 >nul
-copy /y "%NEW_EXE%" "%EXE_PATH%" >nul
-if errorlevel 1 exit /b 1
-set PYINSTALLER_RESET_ENVIRONMENT=1
-start "" "%EXE_PATH%"
-"""
-    if callback:
-        callback("正在应用更新...")
-    with open(updater_bat, "w", encoding="utf-8") as f:
-        f.write(script)
-
+        if callback:
+            callback("正在应用更新...")
+        # 同目录暂存后原子替换，避免中途失败留下半个 exe。
+        fd, staged_exe = tempfile.mkstemp(
+            prefix=".textile-update-", suffix=".exe", dir=os.path.dirname(current_exe)
+        )
+        os.close(fd)
+        shutil.copyfile(downloaded_exe, staged_exe)
+        with open(downloaded_exe, "rb") as f:
+            digest = hashlib.file_digest(f, "sha256").hexdigest()
+        config_path = os.path.join(job_dir, "update.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "target": current_exe,
+                "staged": staged_exe,
+                "backup": staged_exe + ".old",
+                "owner_pid": os.getpid(),
+                "sha256": digest,
+            }, f, ensure_ascii=False)
+        script_path = os.path.join(job_dir, "apply_update.ps1")
+        with open(script_path, "w", encoding="utf-8-sig") as f:
+            f.write(BINARY_UPDATE_SCRIPT)
+        # -File 会把路径中的方括号当作通配符；按字面读取脚本并传入路径。
+        command = "& ([scriptblock]::Create([IO.File]::ReadAllText('{}'))) -ConfigPath '{}'".format(
+            script_path.replace("'", "''"), config_path.replace("'", "''")
+        )
+        encoded_command = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+        powershell = os.path.join(
+            os.environ.get("SystemRoot", r"C:\Windows"),
+            "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
+        )
+        # 外部更新助手不能继承打包程序的 DLL 搜索目录。
+        dll_dir = getattr(sys, "_MEIPASS", None)
+        if dll_dir:
+            import ctypes
+            ctypes.windll.kernel32.SetDllDirectoryW(None)
+        try:
+            with open(os.path.join(job_dir, "launcher.log"), "ab") as log:
+                helper = subprocess.Popen(
+                    [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                     "-EncodedCommand", encoded_command],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    stdout=log, stderr=subprocess.STDOUT, cwd=job_dir,
+                )
+        finally:
+            if dll_dir:
+                ctypes.windll.kernel32.SetDllDirectoryW(dll_dir)
+        deadline = time.monotonic() + 10
+        while not os.path.exists(os.path.join(job_dir, "ready")):
+            if helper.poll() is not None or time.monotonic() >= deadline:
+                raise OSError("更新助手未能启动，请查看 launcher.log 和 update.log")
+            time.sleep(0.1)
+    except Exception as ex:
+        if helper is not None and helper.poll() is None:
+            with suppress(OSError, subprocess.TimeoutExpired):
+                helper.terminate()
+                helper.wait(timeout=5)
+        if staged_exe and os.path.exists(staged_exe):
+            with suppress(OSError):
+                os.remove(staged_exe)
+        message = f"更新未应用，当前程序可继续使用：{ex}"
+        if job_dir:
+            message += f"\n更新包和日志目录：{job_dir}"
+            with suppress(OSError):
+                with open(os.path.join(job_dir, "update.log"), "a", encoding="utf-8") as log:
+                    log.write(message + "\n")
+        return False, message
     if callback:
         callback("正在重启程序...")
-    subprocess.Popen(
-        ["cmd", "/c", updater_bat], creationflags=subprocess.CREATE_NO_WINDOW
-    )
     os._exit(0)
 
 

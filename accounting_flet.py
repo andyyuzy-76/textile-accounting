@@ -58,7 +58,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.10"
+VERSION = "1.15.11"
 
 
 class AccountingApp:
@@ -945,6 +945,9 @@ class AccountingApp:
             if success:
                 self.show_success(update_message)
             else:
+                update_status.value = update_message
+                update_progress.visible = False
+                update_hint.value = "更新未完成，可以重试或手动安装下载包。"
                 run_update_button.disabled = False
                 run_update_button.content = "执行更新"
                 close_button.disabled = False

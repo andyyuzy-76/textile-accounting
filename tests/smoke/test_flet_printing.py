@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 import accounting_flet
 from datetime import datetime
 from typing import Any, cast
@@ -181,7 +182,8 @@ def test_check_for_updates_shows_pending_release_message_without_update_button(
     assert "尚未发布" in page.dialog.content.content.controls[0].value
 
 
-def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch):
+@pytest.mark.parametrize("succeeded", [True, False])
+def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch, succeeded):
     class DummyPage:
         def __init__(self):
             self.dialog = None
@@ -216,7 +218,7 @@ def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch):
         callback("正在应用更新...")
         callback("正在重启程序...")
         progress_messages.append("done")
-        return True, "更新成功"
+        return succeeded, "更新成功" if succeeded else "更新未应用：日志在 update/launcher.log"
 
     monkeypatch.setattr(accounting_flet, "perform_update_fn", fake_perform_update)
 
@@ -242,12 +244,21 @@ def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch):
     update_hint = dialog_column.controls[2]
 
     assert progress_messages == ["done"]
-    assert success_messages == ["更新成功"]
-    assert error_messages == []
-    assert "正在重启程序..." in update_status.value
-    assert update_progress.visible is True
-    assert update_progress.value == 1.0
-    assert "请勿关闭程序" in update_hint.value
+    if succeeded:
+        assert success_messages == ["更新成功"]
+        assert error_messages == []
+        assert "正在重启程序..." in update_status.value
+        assert update_progress.visible is True
+        assert update_progress.value == 1.0
+        assert "请勿关闭程序" in update_hint.value
+    else:
+        assert success_messages == []
+        assert error_messages == [update_status.value]
+        assert "launcher.log" in update_status.value
+        assert update_progress.visible is False
+        assert "可以重试" in update_hint.value
+        assert run_update_button.disabled is False
+        assert page.dialog.actions[0].disabled is False
 
 
 def test_show_receipt_preview_opens_dialog(monkeypatch):
