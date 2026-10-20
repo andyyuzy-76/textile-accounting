@@ -183,11 +183,19 @@ def test_check_for_updates_shows_pending_release_message_without_update_button(
 
 
 @pytest.mark.parametrize("succeeded", [True, False])
-def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch, succeeded):
+@pytest.mark.parametrize("frozen", [True, False])
+def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch, succeeded, frozen):
+    class DummyWindow:
+        destroyed = False
+
+        async def destroy(self):
+            self.destroyed = True
+
     class DummyPage:
         def __init__(self):
             self.dialog = None
             self.updated = False
+            self.window = DummyWindow()
 
         def show_dialog(self, dlg):
             self.dialog = dlg
@@ -208,6 +216,7 @@ def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch, su
         "check_updates_fn",
         lambda silent=False: (True, "1.15.5", "1.15.4", "新版本说明"),
     )
+    monkeypatch.setattr(accounting_flet, "is_frozen_app", lambda: frozen)
 
     progress_messages = []
 
@@ -244,8 +253,9 @@ def test_check_for_updates_shows_progress_feedback_during_update(monkeypatch, su
     update_hint = dialog_column.controls[2]
 
     assert progress_messages == ["done"]
+    assert page.window.destroyed is (succeeded and frozen)
     if succeeded:
-        assert success_messages == ["更新成功"]
+        assert success_messages == ([] if frozen else ["更新成功"])
         assert error_messages == []
         assert "正在重启程序..." in update_status.value
         assert update_progress.visible is True

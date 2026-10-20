@@ -168,10 +168,6 @@ def test_check_for_updates_hides_exe_update_until_release_asset_exists(monkeypat
     assert "尚未发布" in message
 
 
-class ExitCalled(Exception):
-    pass
-
-
 @pytest.fixture
 def binary_update(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
@@ -204,7 +200,7 @@ def binary_update(monkeypatch, tmp_path):
         return Helper()
 
     def exit_process(code):
-        raise ExitCalled(code)
+        pytest.fail("更新助手就绪后应由界面正常关闭，不能强制退出进程")
 
     monkeypatch.setattr(auto_updater.subprocess, "Popen", popen)
     monkeypatch.setattr(auto_updater.os, "_exit", exit_process)
@@ -212,8 +208,9 @@ def binary_update(monkeypatch, tmp_path):
 
 
 def test_binary_update_preserves_target_and_retains_download_before_handoff(binary_update):
-    with pytest.raises(ExitCalled):
-        auto_updater.perform_binary_update()
+    success, message = auto_updater.perform_binary_update()
+    assert success is True
+    assert "重启" in message
     job_dir = binary_update["job_dir"]
     config = json.loads((job_dir / "update.json").read_text(encoding="utf-8"))
     assert Path(config["target"]) == binary_update["target"]
@@ -229,8 +226,8 @@ def test_binary_update_preserves_target_and_retains_download_before_handoff(bina
 
 def test_perform_binary_update_reports_progress_stages(binary_update):
     messages = []
-    with pytest.raises(ExitCalled):
-        auto_updater.perform_binary_update(messages.append)
+    success, _ = auto_updater.perform_binary_update(messages.append)
+    assert success is True
     assert "保存位置：" in messages[0]
     assert messages[1:] == ["正在校验更新包...", "正在应用更新...", "正在重启程序..."]
 

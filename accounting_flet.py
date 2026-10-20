@@ -26,6 +26,7 @@ from app_core.services.printer_settings import PrinterSettingsStore
 from app_core.services.records import RecordService
 from app_core.storage import JsonStore
 from auto_updater import check_for_updates as check_updates_fn
+from auto_updater import is_frozen_app
 from auto_updater import perform_update as perform_update_fn
 
 # 导入打印模块
@@ -58,7 +59,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.12"
+VERSION = "1.15.13"
 
 
 class AccountingApp:
@@ -942,7 +943,9 @@ class AccountingApp:
                 perform_update_fn,
                 progress_callback,
             )
-            if success:
+            if success and is_frozen_app():
+                await self.page.window.destroy()
+            elif success:
                 self.show_success(update_message)
             else:
                 update_status.value = update_message

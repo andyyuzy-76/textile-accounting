@@ -1,13 +1,12 @@
 {
-    "version": "1.15.12",
-    "release_date": "2026-10-19",
-    "message": "改进云备份校验提示，明确指出出错的名称、编号或 NAS 账号",
-    "exe_asset_name": "TextileAccounting_v1.15.12.exe",
+    "version": "1.15.13",
+    "release_date": "2026-10-20",
+    "message": "修复自动更新后临时目录无法清理的警告弹窗",
+    "exe_asset_name": "TextileAccounting_v1.15.13.exe",
     "changes": [
-        "分别提示账本名称、本机名称、账本编号和电脑编号的校验错误",
-        "NAS 账号在保存和连接前校验，账号问题不再误报为电脑信息无效",
-        "本地身份文件校验失败时保留具体字段原因，继续保留原文件",
-        "保持原有账本和电脑编号，兼容历史备份与中文电脑名称"
+        "更新助手就绪后正常关闭窗口，等待窗口进程退出并释放临时文件",
+        "修复更新时强制退出导致 Failed to remove temporary directory 警告的问题",
+        "保留同路径替换、更新包校验和启动失败回退流程"
     ],
     "min_version": "1.0.0"
 }

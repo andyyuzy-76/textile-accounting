@@ -235,7 +235,7 @@ def download_url(url, dest_path):
 
 
 def perform_binary_update(callback=None):
-    """打包版 exe 自更新"""
+    """准备打包版更新；成功后由调用方正常关闭窗口，让助手替换并重启。"""
     manifest = get_remote_manifest()
     if not manifest:
         return False, "无法获取远程版本信息"
@@ -348,7 +348,7 @@ def perform_binary_update(callback=None):
         return False, message
     if callback:
         callback("正在重启程序...")
-    os._exit(0)
+    return True, "正在重启程序..."
 
 
 def compare_versions(v1, v2):
