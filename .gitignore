@@ -3,6 +3,7 @@ records.json
 cloud_backup.json
 cloud_backup_state.json
 backup_identity.json
+printer_settings.json
 backups/
 
 # Python
