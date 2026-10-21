@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import accounting_flet
 
 
@@ -16,6 +19,13 @@ class DummyPage:
 
     def update(self):
         self.updated = True
+
+
+def test_ui_version_matches_release_manifest():
+    manifest_path = Path(accounting_flet.__file__).with_name("version.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert accounting_flet.VERSION == manifest["version"]
 
 
 def test_configure_page_sets_window_defaults():

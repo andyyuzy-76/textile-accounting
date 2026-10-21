@@ -226,12 +226,17 @@ class RecordService:
 
     def summarize_by_date(self, date: str) -> dict[str, Any]:
         selected = [record for record in self._records if record.get("date") == date]
+        return self.summarize_records(selected)
+
+    @staticmethod
+    def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+        """按商品明细分别累计销售和退货，兼容无明细的历史记录。"""
         sale_quantity = 0
         sale_amount = 0.0
         return_quantity = 0
         return_amount = 0.0
 
-        for record in selected:
+        for record in records:
             items = record.get("items") or []
             if items:
                 for item in items:

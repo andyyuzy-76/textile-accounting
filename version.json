@@ -1,14 +1,15 @@
 {
-    "version": "1.15.14",
+    "version": "1.15.15",
     "release_date": "2026-10-21",
-    "message": "自动更新适配国内网络，补齐工程基建",
-    "exe_asset_name": "TextileAccounting_v1.15.14.exe",
+    "message": "修复混合销售退货单的月度统计，统一版本与文档说明",
+    "exe_asset_name": "TextileAccounting_v1.15.15.exe",
     "changes": [
-        "版本清单改为 jsDelivr、GitHub raw、Releases API 三级回退，国内网络下不再直接提示无法连接服务器",
-        "更新包下载支持 download_mirrors 自定义镜像，失败自动重试并切换地址",
-        "下载改为流式写入，降低大文件下载中断概率",
-        "修复更新助手在配置文件损坏时二次抛异常、错误提示无法弹出的问题",
-        "补齐 LICENSE、requirements.txt、requirements-dev.txt 与 GitHub Actions CI"
+        "月度统计与今日统计共用明细汇总逻辑，分别累计销售和退货",
+        "修复混合单净数量或净金额为零时月度统计漏计的问题",
+        "同步修正月度报表每日明细、销售平均单价，兼容无商品明细的旧记录",
+        "统一界面版本号、版本清单和文档中的 Python、Flet 版本说明",
+        "补充版本一致性及统计回归测试，新增 Windows 客户端构建发布流程",
+        "包含此前源码版 1.15.14 的国内网络更新下载改进"
     ],
     "download_mirrors": [],
     "min_version": "1.0.0"

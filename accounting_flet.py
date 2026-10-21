@@ -59,7 +59,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.13"
+VERSION = "1.15.15"
 
 
 class AccountingApp:
@@ -2618,52 +2618,23 @@ class AccountingApp:
             if not month_records:
                 return f"{month_value} 没有记录"
 
-            sale_records = [
-                record
-                for record in month_records
-                if record.get("type") != "return" and record.get("quantity", 0) > 0
-            ]
-            return_records = [
-                record
-                for record in month_records
-                if record.get("type") == "return" or record.get("quantity", 0) < 0
-            ]
-            sale_qty = sum(int(record.get("quantity", 0)) for record in sale_records)
-            sale_amount = sum(
-                float(record.get("total_amount", 0)) for record in sale_records
-            )
-            return_qty = sum(
-                abs(int(record.get("quantity", 0))) for record in return_records
-            )
-            return_amount = sum(
-                abs(float(record.get("total_amount", 0))) for record in return_records
-            )
-            net_qty = sale_qty - return_qty
-            net_amount = sale_amount - return_amount
+            summary = self.record_service.summarize_records(month_records)
+            sale_qty = summary["sale_quantity"]
+            sale_amount = summary["sale_amount"]
+            return_qty = summary["return_quantity"]
+            return_amount = summary["return_amount"]
+            net_qty = summary["net_quantity"]
+            net_amount = summary["net_amount"]
             avg_price = sale_amount / sale_qty if sale_qty else 0.0
 
-            daily_stats: dict[str, dict[str, float]] = {}
+            records_by_date: dict[str, list[dict[str, Any]]] = {}
             for record in month_records:
                 date = str(record.get("date", ""))
-                daily_stats.setdefault(
-                    date,
-                    {
-                        "qty": 0.0,
-                        "amount": 0.0,
-                        "return_qty": 0.0,
-                        "return_amount": 0.0,
-                    },
-                )
-                if record.get("type") == "return" or int(record.get("quantity", 0)) < 0:
-                    daily_stats[date]["return_qty"] += abs(
-                        int(record.get("quantity", 0))
-                    )
-                    daily_stats[date]["return_amount"] += abs(
-                        float(record.get("total_amount", 0))
-                    )
-                else:
-                    daily_stats[date]["qty"] += int(record.get("quantity", 0))
-                    daily_stats[date]["amount"] += float(record.get("total_amount", 0))
+                records_by_date.setdefault(date, []).append(record)
+            daily_stats = {
+                date: self.record_service.summarize_records(records)
+                for date, records in records_by_date.items()
+            }
 
             lines = [
                 f"📊 {month_value} 月度统计",
@@ -2683,11 +2654,13 @@ class AccountingApp:
             for date in sorted(daily_stats.keys()):
                 stats = daily_stats[date]
                 parts = []
-                if stats["qty"] > 0:
-                    parts.append(f"售{int(stats['qty'])}套¥{stats['amount']:.0f}")
-                if stats["return_qty"] > 0:
+                if stats["sale_quantity"] > 0:
                     parts.append(
-                        f"退{int(stats['return_qty'])}套¥{stats['return_amount']:.0f}"
+                        f"售{stats['sale_quantity']}套¥{stats['sale_amount']:.0f}"
+                    )
+                if stats["return_quantity"] > 0:
+                    parts.append(
+                        f"退{stats['return_quantity']}套¥{stats['return_amount']:.0f}"
                     )
                 lines.append(f"{date}: {' | '.join(parts)}")
             return "\n".join(lines)

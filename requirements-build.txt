@@ -1,0 +1,11 @@
+-r requirements-dev.txt
+
+# Windows 单文件客户端构建工具，与 requirements.txt 中的 Flet 版本保持一致。
+flet-cli==0.81.0
+pyinstaller==6.22.3
+
+# 发布版保留 Excel 导入与 Windows 打印机枚举能力。
+pandas==2.3.3
+openpyxl==3.1.5
+pywin32==312; sys_platform == "win32"
+python-escpos==3.1

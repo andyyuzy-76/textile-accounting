@@ -144,6 +144,15 @@ python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_e
 - `tests/smoke`：Flet 入口烟雾测试
 - `test_flet.py`：仅保留为手工调试入口，不再参与阻塞式自动测试
 
+## Windows 客户端发布
+
+1. 同步更新 `version.json`、`accounting_flet.py` 中的 `VERSION` 及版本说明，确保 `exe_asset_name` 为 `TextileAccounting_v版本号.exe`。
+2. 推送到 `main` 后，在 GitHub Actions 手动运行 **Release Windows client**。流程在 Windows / Python 3.12 上安装锁定依赖，执行全部测试，打包单文件 EXE，并检查内置版本清单、Flet 运行时及启动窗口。
+3. 测试和打包全部成功后，流程创建对应标签和 **草稿 Release**，上传 EXE、`version.json` 与 `SHA256SUMS.txt`；确认资产完整后再发布草稿并设为最新版本。草稿不会被客户端当作可下载更新。
+4. 正式发布后，已有 EXE 可在「系统设置 → 检查更新」中升级，无需卸载。账目数据目录不参与打包，不会随程序更新被覆盖；重要账目仍建议先备份。
+
+发布使用 `requirements-build.txt` 固定构建工具和 Excel、打印依赖；不再恢复 legacy Tk 版发布流程。
+
 ## 数据存储
 
 数据保存在用户目录下：
@@ -151,7 +160,14 @@ python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_e
 
 ## 版本历史
 
-### v1.15.14
+### v1.15.15
+- 🐛 月度统计与今日统计统一按商品明细分别累计销售、退货，修正混合单及零净数量/金额时的漏计
+- 📊 同步修正月报每日明细和销售平均单价，继续兼容无商品明细的旧记录
+- 📝 统一界面、版本清单及文档版本，明确 Python 3.10+、Flet 0.81.0
+- ✅ 增加版本一致性、混合单、历史记录及月份切换回归测试
+- 📦 新增 Windows 自动构建与草稿发布流程，包含此前源码版 v1.15.14 的更新下载改进
+
+### v1.15.14（源码更新，未单独发布 EXE）
 - 🔄 自动更新适配国内网络
   - 版本清单改为 jsDelivr → GitHub raw → Releases API 三级回退
   - 更新包下载支持 `download_mirrors` 自定义镜像，并自动重试

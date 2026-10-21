@@ -1,3 +1,5 @@
+import pytest
+
 from app_core.services.records import RecordService
 from app_core.storage import JsonStore
 
@@ -206,3 +208,81 @@ def test_summary_counts_mixed_record_sale_and_return_separately(tmp_path):
     assert summary["return_amount"] == 100.0
     assert summary["net_quantity"] == 2
     assert summary["net_amount"] == 200.0
+
+
+@pytest.mark.parametrize("items", [None, []], ids=["missing-items", "empty-items"])
+def test_summary_supports_legacy_records_without_items(tmp_path, items):
+    service = RecordService(JsonStore(tmp_path / "records.json"))
+    records = [
+        {"id": 1, "date": "2026-04-21", "quantity": 2, "total_amount": 180.0},
+        {"id": 2, "date": "2026-04-21", "quantity": -1, "total_amount": -70.0},
+        {
+            "id": 3,
+            "date": "2026-04-21",
+            "quantity": 1,
+            "total_amount": 50.0,
+            "type": "return",
+        },
+    ]
+    if items is not None:
+        for record in records:
+            record["items"] = items
+    service.replace_records(records)
+
+    expected = {
+        "sale_quantity": 2,
+        "sale_amount": 180.0,
+        "return_quantity": 2,
+        "return_amount": 120.0,
+        "net_quantity": 0,
+        "net_amount": 60.0,
+    }
+    assert RecordService.summarize_records(records) == expected
+    assert service.summarize_by_date("2026-04-21") == expected
+
+
+def test_shared_summary_matches_daily_totals_and_does_not_mutate_records(tmp_path):
+    service = RecordService(JsonStore(tmp_path / "records.json"))
+    first = service.add_record(
+        date="2026-04-21",
+        items=[{"quantity": 3, "unit_price": 100}],
+    )
+    service.append_items(
+        first["id"], [{"quantity": 1, "unit_price": 80}], record_type="return"
+    )
+    service.add_record(
+        date="2026-04-22",
+        items=[
+            {"quantity": 1, "unit_price": 50, "record_type": "sale"},
+            {"quantity": 1, "unit_price": 100, "record_type": "return"},
+        ],
+        record_type="mixed",
+    )
+    records = service.list_records()
+    before = (tmp_path / "records.json").read_bytes()
+
+    summary = RecordService.summarize_records(records)
+    daily = [service.summarize_by_date(date) for date in ("2026-04-21", "2026-04-22")]
+
+    assert summary == {
+        "sale_quantity": 4,
+        "sale_amount": 350.0,
+        "return_quantity": 2,
+        "return_amount": 180.0,
+        "net_quantity": 2,
+        "net_amount": 170.0,
+    }
+    assert summary == {key: sum(day[key] for day in daily) for key in summary}
+    assert service.reload() == records
+    assert (tmp_path / "records.json").read_bytes() == before
+
+
+def test_shared_summary_handles_empty_records():
+    assert RecordService.summarize_records([]) == {
+        "sale_quantity": 0,
+        "sale_amount": 0.0,
+        "return_quantity": 0,
+        "return_amount": 0.0,
+        "net_quantity": 0,
+        "net_amount": 0.0,
+    }
