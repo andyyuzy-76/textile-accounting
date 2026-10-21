@@ -1,0 +1,16 @@
+# 运行主程序（Flet 版）所需，Python 3.10+
+# Flet 的组件 API 在小版本之间会变动，这里锁定开发验证过的版本。
+# 注意：accounting_flet.py 中的 ft.border.all() 自 0.80 起已标记弃用，
+# 计划在 0.83 移除，升级 Flet 前需改为 Border.all()。
+flet==0.81.0
+flet-desktop==0.81.0
+
+# 以下为可选依赖，按需取消注释后安装
+
+# Excel 导入（「导入Excel」按钮、accounting_gui.py 的 Excel 导入）
+# pandas>=2.0
+# openpyxl>=3.1
+
+# 打印增强
+# pywin32>=306          # 枚举 Windows 打印机（receipt_printer.py 的 win32print 分支）
+# python-escpos>=3.0    # USB / 网络热敏打印机直连

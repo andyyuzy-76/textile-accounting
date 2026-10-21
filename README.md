@@ -20,13 +20,17 @@
 ### 方式一：直接运行 Python 脚本（推荐 Flet 版）
 
 ```bash
-# 需要 Python 3.10+ 且已安装 Flet 依赖
+# 需要 Python 3.10+
+pip install -r requirements.txt
 python accounting_flet.py
 ```
+
+`requirements.txt` 已锁定 Flet 0.81.0 —— Flet 的组件 API 在小版本之间会变动，随意升级可能导致界面报错。Excel 导入、打印机枚举等能力是可选依赖，文件内有注释说明。
 
 ### 方式二：运行 legacy Tk 版（仅维护，不再作为主线功能入口）
 
 ```bash
+pip install -r requirements.txt
 python accounting_gui.py
 ```
 
@@ -91,14 +95,50 @@ python accounting_gui.py
 
 数据目录为 `%USERPROFILE%\.accounting-tool\`，配置文件为 `cloud_backup.json`，账本及本机身份保存在 `backup_identity.json`，上次成功备份状态为 `cloud_backup_state.json`。当前功能不新增第三方依赖。已有 exe 可通过「检查更新」获取新功能；自行打包可运行 `build_flet.bat`。从 v1.15.8 或更早的源码版升级时，请先使用 `git pull` 获取新增模块，再重新启动。
 
+## 自动更新与国内网络
+
+「检查更新」读取仓库中的 `version.json`，更新包从 GitHub Releases 下载。由于国内网络对 `raw.githubusercontent.com` 和 `github.com` 的访问不稳定，更新模块做了两层兜底：
+
+**清单读取顺序**（任一成功即停止）
+1. jsDelivr CDN：`cdn.jsdelivr.net/gh/<repo>@main/version.json`
+2. GitHub raw：`raw.githubusercontent.com`
+3. Releases API：只读取 `tag_name` 和资产名（`api.github.com` 通常可直连）
+
+**更新包下载顺序**
+1. `version.json` 中 `download_mirrors` 配置的镜像地址（可选）
+2. GitHub 官方 `browser_download_url`
+
+镜像只影响下载地址，文件大小和 SHA-256 摘要始终取自 GitHub Releases API，校验逻辑不放松。如果需要自建加速，在 `version.json` 里加上镜像前缀即可，无需改代码：
+
+```json
+"download_mirrors": [
+  "https://your-cdn.example.com/textile/",
+  "https://your-cdn.example.com/d/{name}"
+]
+```
+
+两种写法都支持：以 `/` 结尾的目录前缀会自动拼接文件名；带 `{name}` / `{url}` 占位符的模板会分别替换为文件名和 GitHub 原始下载地址。
+
+更新失败时不会影响当前程序：更新包先下载到数据目录、按 SHA-256 校验，再在同目录暂存并原子替换，替换失败会自动回退旧版本，日志写在 `%USERPROFILE%\.accounting-tool\update\`。
+
 ## 验证与回归
 
-当前仓库已经提供可自动执行的基础验证路径：
+**环境准备**
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements-dev.txt
+```
+
+**执行验证**
 
 ```bash
 python -m pytest tests/app_core tests/smoke -q
 python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_excel.py
 ```
+
+仓库已配置 GitHub Actions（`.github/workflows/ci.yml`），每次推送 `main` 或提交 PR 会在 Windows 上对 Python 3.10 / 3.12 跑一遍语法检查和全部测试。
 
 - `tests/app_core`：共享存储、记录服务、导入解析、打印设置、WebDAV 备份与恢复回滚（使用本地模拟服务）
 - `tests/smoke`：Flet 入口烟雾测试
@@ -111,19 +151,50 @@ python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_e
 
 ## 版本历史
 
-### v0.7
+### v1.15.14
+- 🔄 自动更新适配国内网络
+  - 版本清单改为 jsDelivr → GitHub raw → Releases API 三级回退
+  - 更新包下载支持 `download_mirrors` 自定义镜像，并自动重试
+  - 下载改为流式写入，降低大文件中断概率
+- 🐛 修复更新助手在配置文件损坏时二次抛异常、错误提示弹不出来的问题
+- 🏗 补齐工程基建：`LICENSE`、`requirements.txt`、`requirements-dev.txt`、GitHub Actions CI
+- 📝 README 补充自动更新说明、开发环境准备，版本历史与 Releases 对齐
+
+### v1.15.13
+- 🐛 修复自动更新后临时目录无法清理的警告弹窗
+  - 更新助手就绪后正常关闭窗口，等待窗口进程退出并释放临时文件
+  - 保留同路径替换、更新包校验和启动失败回退流程
+
+### v1.15.12
+- 🐛 改进云备份身份与账号校验的错误提示
+
+### v1.15.11
+- 🐛 修复更新后未替换程序文件、未自动重启的问题
+
+### v1.15.10
+- ✨ 云端备份按账本编号和来源电脑识别，备份历史展示来源信息
+
+### v1.15.9
+- ✨ 新增云端备份（WebDAV 手动/自动备份、上传校验、历史恢复）
+- ✨ 新增销售退货开关
+
+> 1.15.0 至 1.15.8 的变更请查阅 [Releases](https://github.com/andyyuzy-76/textile-accounting/releases)。
+
+### 早期版本（0.x）
+
+#### v0.7
 - 🐛 修复自动更新按钮显示问题
 
-### v0.6
+#### v0.6
 - 📝 优化小票打印格式
 
-### v0.5
+#### v0.5
 - 🐛 修复自动更新文件名问题
 
-### v0.4
+#### v0.4
 - 📝 优化小票打印格式，添加紧凑模式
 
-### v0.3
+#### v0.3
 - ✨ 新增软件内自动更新功能
   - 一键下载并自动安装新版本
   - 支持进度显示
@@ -133,7 +204,7 @@ python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_e
   - 自动识别EXE文件
   - 显示自动更新按钮（仅EXE版本）
 
-### v0.2
+#### v0.2
 - ✨ 新增小票打印功能
   - 支持58mm热敏打印机
   - 支持打印预览
@@ -141,7 +212,7 @@ python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_e
   - 销售/退货后可直接打印
 - 📝 右键菜单新增"打印小票"选项
 
-### v0.1
+#### v0.1
 - 初始版本
 - 多商品录入
 - 部分退货功能
@@ -150,4 +221,4 @@ python -m py_compile accounting_flet.py accounting_gui.py import_csv.py import_e
 
 ## 开源协议
 
-MIT License
+本项目采用 [MIT License](LICENSE)。

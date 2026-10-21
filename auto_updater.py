@@ -1,6 +1,19 @@
 """
 自动更新模块
-从GitHub仓库检查并下载最新版本
+从 GitHub 仓库检查并下载最新版本
+
+版本清单（version.json）与更新包都放在 GitHub 上。国内网络环境下
+raw.githubusercontent.com 经常超时、github.com 的 release 资产下载也会
+中断，因此这里做两层兜底：
+
+1. 清单读取：jsDelivr CDN -> GitHub raw -> Releases API（只取 tag 和资产名）
+2. 更新包下载：version.json 中可选的 download_mirrors -> GitHub 官方地址
+
+download_mirrors 是一个字符串数组，支持两种写法：
+    "https://your-cdn.example.com/textile/"      目录前缀，自动拼接文件名
+    "https://your-cdn.example.com/d/{name}"      占位符写法，支持 {name} / {url}
+镜像只影响下载地址；文件大小和 SHA-256 摘要仍然取自 GitHub Releases API，
+校验逻辑不放松。
 """
 
 import os
@@ -10,6 +23,7 @@ import base64
 from contextlib import suppress
 import urllib.request
 import urllib.error
+from urllib.parse import quote
 import tempfile
 import shutil
 import subprocess
@@ -21,12 +35,26 @@ from app_core.paths import ensure_data_dir
 
 # GitHub仓库信息
 GITHUB_REPO = "andyyuzy-76/textile-accounting"
+GITHUB_BRANCH = "main"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/contents/version.json"
-GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
+GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}"
+JSDELIVR_GH_URL = f"https://cdn.jsdelivr.net/gh/{GITHUB_REPO}@{GITHUB_BRANCH}"
 GITHUB_RELEASE_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+# 清单来源，按国内可达性排序；前一个失败自动尝试下一个
+MANIFEST_SOURCES = (
+    ("jsDelivr", f"{JSDELIVR_GH_URL}/version.json"),
+    ("GitHub raw", f"{GITHUB_RAW_URL}/version.json"),
+)
+
+USER_AGENT = "TextileAccounting/1.0"
 
 # 本地版本文件路径
 LOCAL_VERSION_FILE = "version.json"
+
+# 清单缓存，避免同一次检查里重复发起网络请求
+_MANIFEST_CACHE = {"value": None, "expires": 0.0}
+_MANIFEST_TTL = 60.0
 
 BINARY_UPDATE_SCRIPT = r'''param([string]$ConfigPath)
 $ErrorActionPreference = 'Stop'
@@ -74,12 +102,15 @@ try {
     Remove-Item -LiteralPath $job.backup -Force -ErrorAction SilentlyContinue
 } catch {
     $message = "更新失败：$($_.Exception.Message)"
-    if ($replaced) {
+    # $job 可能在读取配置阶段就失败（例如 JSON 损坏），此时为 $null，不能直接取属性。
+    $targetPath = if ($job) { $job.target } else { $null }
+    $backupPath = if ($job) { $job.backup } else { $null }
+    if ($replaced -and $targetPath -and $backupPath) {
         try {
-            [System.IO.File]::Replace($job.backup, $job.target, [NullString]::Value)
+            [System.IO.File]::Replace($backupPath, $targetPath, [NullString]::Value)
             $message += "`n已恢复旧程序。"
         } catch {
-            $message += "`n自动回退失败：$($_.Exception.Message)`n旧程序保留在：$($job.backup)"
+            $message += "`n自动回退失败：$($_.Exception.Message)`n旧程序保留在：$backupPath"
         }
     }
     $message += "`n更新包目录：$jobDir`n日志：$logPath"
@@ -113,40 +144,85 @@ def get_current_version():
     return "1.0.0"
 
 
-def get_remote_version():
-    """获取远程最新版本号"""
+def _build_request(url, accept=None):
+    """构造带统一请求头的 Request，并禁用缓存"""
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Cache-Control": "no-cache",
+    }
+    if accept:
+        headers["Accept"] = accept
+    separator = "&" if "?" in url else "?"
+    return urllib.request.Request(
+        f"{url}{separator}t={datetime.now().timestamp()}", headers=headers
+    )
+
+
+def _fetch_json(url, timeout=10, accept=None):
+    """拉取 JSON，失败返回 None"""
     try:
-        url = f"{GITHUB_RAW_URL}/version.json?t={datetime.now().timestamp()}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "TextileAccounting/1.0",
-                "Cache-Control": "no-cache",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            return data.get("version", "1.0.0"), data.get("message", "")
+        with urllib.request.urlopen(_build_request(url, accept), timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
     except Exception as e:
-        print(f"检查更新失败: {e}")
-        return None, None
+        print(f"请求 {url} 失败: {e}")
+        return None
+
+
+def _manifest_from_release_api():
+    """兜底：从 Releases API 反推清单（api.github.com 在国内通常可直连）"""
+    data = _fetch_json(GITHUB_RELEASE_API_URL, timeout=15, accept="application/vnd.github+json")
+    if not data:
+        return None
+    tag = str(data.get("tag_name") or "").strip()
+    version = tag[1:] if tag.lower().startswith("v") else tag
+    if not version:
+        return None
+    exe_names = [
+        asset.get("name", "")
+        for asset in data.get("assets", [])
+        if str(asset.get("name", "")).lower().endswith(".exe")
+    ]
+    manifest = {
+        "version": version,
+        "message": data.get("name") or "",
+        "changes": [],
+        "_source": "GitHub Releases API",
+    }
+    if exe_names:
+        manifest["exe_asset_name"] = exe_names[0]
+    return manifest
 
 
 def get_remote_manifest():
-    """获取远程版本清单"""
-    try:
-        url = f"{GITHUB_RAW_URL}/version.json?t={datetime.now().timestamp()}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "TextileAccounting/1.0",
-                "Cache-Control": "no-cache",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except Exception:
-        return None
+    """获取远程版本清单，按 MANIFEST_SOURCES 顺序回退，最后尝试 Releases API"""
+    now = time.monotonic()
+    if _MANIFEST_CACHE["value"] and _MANIFEST_CACHE["expires"] > now:
+        return _MANIFEST_CACHE["value"]
+
+    for name, url in MANIFEST_SOURCES:
+        data = _fetch_json(url)
+        if isinstance(data, dict) and data.get("version"):
+            data.setdefault("_source", name)
+            _MANIFEST_CACHE["value"] = data
+            _MANIFEST_CACHE["expires"] = now + _MANIFEST_TTL
+            return data
+        print(f"清单源不可用：{name}")
+
+    fallback = _manifest_from_release_api()
+    if fallback:
+        _MANIFEST_CACHE["value"] = fallback
+        _MANIFEST_CACHE["expires"] = now + _MANIFEST_TTL
+        return fallback
+
+    return None
+
+
+def get_remote_version():
+    """获取远程最新版本号"""
+    manifest = get_remote_manifest()
+    if not manifest:
+        return None, None
+    return manifest.get("version", "1.0.0"), manifest.get("message", "")
 
 
 def get_release_asset_download_url(asset_name: str):
@@ -159,24 +235,52 @@ def get_release_asset_download_url(asset_name: str):
 
 def get_release_asset_info(asset_name: str):
     """获取最新 release 中指定资产的元信息"""
-    try:
-        req = urllib.request.Request(
-            GITHUB_RELEASE_API_URL,
-            headers={
-                "User-Agent": "TextileAccounting/1.0",
-                "Accept": "application/vnd.github+json",
-                "Cache-Control": "no-cache",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        for asset in data.get("assets", []):
-            if asset.get("name") == asset_name:
-                return asset
+    data = _fetch_json(
+        GITHUB_RELEASE_API_URL, timeout=15, accept="application/vnd.github+json"
+    )
+    if not data:
+        print("获取 release 资产失败：接口不可达")
         return None
-    except Exception as e:
-        print(f"获取 release 资产失败: {e}")
-        return None
+    for asset in data.get("assets", []):
+        if asset.get("name") == asset_name:
+            return asset
+    return None
+
+
+def build_asset_candidates(asset_name: str, asset_info: dict, manifest=None):
+    """按优先级给出更新包的候选下载地址：自定义镜像 -> GitHub 官方"""
+    urls = []
+    official = (asset_info or {}).get("browser_download_url")
+    mirrors = []
+    if isinstance(manifest, dict):
+        raw_mirrors = manifest.get("download_mirrors")
+        if isinstance(raw_mirrors, list):
+            mirrors = [m for m in raw_mirrors if isinstance(m, str) and m.strip()]
+
+    for mirror in mirrors:
+        template = mirror.strip()
+        if "{url}" in template or "{name}" in template:
+            candidate = template.replace("{name}", quote(asset_name))
+            if official:
+                candidate = candidate.replace("{url}", quote(official, safe=":/"))
+            else:
+                candidate = candidate.replace("{url}", "")
+        else:
+            candidate = f"{template.rstrip('/')}/{quote(asset_name)}"
+        if candidate:
+            urls.append(candidate)
+
+    if official:
+        urls.append(official)
+
+    # 去重但保持顺序
+    seen = set()
+    ordered = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            ordered.append(url)
+    return ordered
 
 
 def verify_downloaded_file(
@@ -213,32 +317,48 @@ def verify_downloaded_file(
     return True, ""
 
 
-def download_url(url, dest_path):
+def download_url(url, dest_path, timeout=120):
     """下载任意 URL 到目标文件"""
     try:
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        req = urllib.request.Request(
+        request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "TextileAccounting/1.0",
+                "User-Agent": USER_AGENT,
                 "Cache-Control": "no-cache",
                 "Accept": "application/octet-stream",
             },
         )
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             with open(dest_path, "wb") as f:
-                f.write(response.read())
+                shutil.copyfileobj(response, f, 1024 * 256)
         return True
     except Exception as e:
         print(f"下载 {url} 失败: {e}")
         return False
 
 
+def download_from_candidates(candidates, dest_path, attempts_per_source=2):
+    """依次尝试候选地址下载，任一成功即返回"""
+    if not candidates:
+        return False, "没有可用的下载地址"
+    errors = []
+    for url in candidates:
+        for attempt in range(1, attempts_per_source + 1):
+            if download_url(url, dest_path, timeout=180):
+                return True, url
+            errors.append(f"{url} 第 {attempt} 次失败")
+            if os.path.exists(dest_path):
+                with suppress(OSError):
+                    os.remove(dest_path)
+    return False, "；".join(errors[-3:])
+
+
 def perform_binary_update(callback=None):
     """准备打包版更新；成功后由调用方正常关闭窗口，让助手替换并重启。"""
     manifest = get_remote_manifest()
     if not manifest:
-        return False, "无法获取远程版本信息"
+        return False, "无法获取远程版本信息，请检查网络后重试"
 
     asset_name = manifest.get("exe_asset_name", "家纺记账系统-苹果风格.exe")
     if (
@@ -249,10 +369,12 @@ def perform_binary_update(callback=None):
         return False, "更新包文件名无效"
     asset_info = get_release_asset_info(asset_name)
     if not asset_info:
-        return False, f"未找到发布资产: {asset_name}"
+        return False, f"未找到发布资产: {asset_name}（请确认已发布到 GitHub Releases）"
     asset_url = asset_info.get("browser_download_url")
     expected_size = asset_info.get("size")
     expected_digest = asset_info.get("digest")
+
+    candidates = build_asset_candidates(asset_name, asset_info, manifest)
 
     current_exe = os.path.abspath(sys.executable)
     if not current_exe.lower().endswith(".exe"):
@@ -268,8 +390,9 @@ def perform_binary_update(callback=None):
         downloaded_exe = os.path.join(job_dir, asset_name)
         if callback:
             callback(f"正在下载软件更新包...\n保存位置：{downloaded_exe}")
-        if not download_url(asset_url, downloaded_exe):
-            raise OSError("下载更新包失败")
+        downloaded, used_source = download_from_candidates(candidates, downloaded_exe)
+        if not downloaded:
+            raise OSError(f"下载更新包失败（已尝试 {len(candidates)} 个地址）：{used_source}")
         if callback:
             callback("正在校验更新包...")
         verified, verify_message = verify_downloaded_file(
@@ -297,6 +420,7 @@ def perform_binary_update(callback=None):
                 "backup": staged_exe + ".old",
                 "owner_pid": os.getpid(),
                 "sha256": digest,
+                "source": used_source,
             }, f, ensure_ascii=False)
         script_path = os.path.join(job_dir, "apply_update.ps1")
         with open(script_path, "w", encoding="utf-8-sig") as f:
@@ -374,24 +498,28 @@ def compare_versions(v1, v2):
 
 
 def download_file(filename, dest_path):
-    """从GitHub下载文件"""
-    url = f"{GITHUB_RAW_URL}/{filename}"
-    try:
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "TextileAccounting/1.0",
-                "Cache-Control": "no-cache",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=30) as response:
-            with open(dest_path, "wb") as f:
-                f.write(response.read())
-        return True
-    except Exception as e:
-        print(f"下载 {filename} 失败: {e}")
-        return False
+    """从 GitHub 下载源码文件（jsDelivr 优先，raw 兜底）"""
+    for name, base in (
+        ("jsDelivr", JSDELIVR_GH_URL),
+        ("GitHub raw", GITHUB_RAW_URL),
+    ):
+        url = f"{base}/{filename}"
+        try:
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Cache-Control": "no-cache",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                with open(dest_path, "wb") as f:
+                    f.write(response.read())
+            return True
+        except Exception as e:
+            print(f"从 {name} 下载 {filename} 失败: {e}")
+    return False
 
 
 def perform_update(callback=None):

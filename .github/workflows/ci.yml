@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # 目标平台只有 Windows（win32print、DPAPI 加密等），直接在 Windows 上验证
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: 语法检查
+        run: >-
+          python -m py_compile
+          accounting.py
+          accounting_flet.py
+          accounting_gui.py
+          auto_updater.py
+          import_csv.py
+          import_excel.py
+          receipt_printer.py
+
+      - name: 单元测试与烟雾测试
+        run: python -m pytest tests/app_core tests/smoke -q

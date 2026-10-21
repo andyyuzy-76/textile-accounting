@@ -1,12 +1,15 @@
 {
-    "version": "1.15.13",
-    "release_date": "2026-10-20",
-    "message": "修复自动更新后临时目录无法清理的警告弹窗",
-    "exe_asset_name": "TextileAccounting_v1.15.13.exe",
+    "version": "1.15.14",
+    "release_date": "2026-10-21",
+    "message": "自动更新适配国内网络，补齐工程基建",
+    "exe_asset_name": "TextileAccounting_v1.15.14.exe",
     "changes": [
-        "更新助手就绪后正常关闭窗口，等待窗口进程退出并释放临时文件",
-        "修复更新时强制退出导致 Failed to remove temporary directory 警告的问题",
-        "保留同路径替换、更新包校验和启动失败回退流程"
+        "版本清单改为 jsDelivr、GitHub raw、Releases API 三级回退，国内网络下不再直接提示无法连接服务器",
+        "更新包下载支持 download_mirrors 自定义镜像，失败自动重试并切换地址",
+        "下载改为流式写入，降低大文件下载中断概率",
+        "修复更新助手在配置文件损坏时二次抛异常、错误提示无法弹出的问题",
+        "补齐 LICENSE、requirements.txt、requirements-dev.txt 与 GitHub Actions CI"
     ],
+    "download_mirrors": [],
     "min_version": "1.0.0"
 }
