@@ -185,7 +185,11 @@ def binary_update(monkeypatch, tmp_path):
         "size": 3,
         "digest": "sha256:" + hashlib.sha256(b"exe").hexdigest(),
     })
-    monkeypatch.setattr(auto_updater, "download_url", lambda url, path: Path(path).write_bytes(b"exe"))
+    monkeypatch.setattr(
+        auto_updater,
+        "download_url",
+        lambda url, path, timeout=120: Path(path).write_bytes(b"exe"),
+    )
 
     class Helper:
         def poll(self):
@@ -209,7 +213,7 @@ def binary_update(monkeypatch, tmp_path):
 
 def test_binary_update_preserves_target_and_retains_download_before_handoff(binary_update):
     success, message = auto_updater.perform_binary_update()
-    assert success is True
+    assert success is True, message
     assert "重启" in message
     job_dir = binary_update["job_dir"]
     config = json.loads((job_dir / "update.json").read_text(encoding="utf-8"))
@@ -226,8 +230,8 @@ def test_binary_update_preserves_target_and_retains_download_before_handoff(bina
 
 def test_perform_binary_update_reports_progress_stages(binary_update):
     messages = []
-    success, _ = auto_updater.perform_binary_update(messages.append)
-    assert success is True
+    success, message = auto_updater.perform_binary_update(messages.append)
+    assert success is True, message
     assert "保存位置：" in messages[0]
     assert messages[1:] == ["正在校验更新包...", "正在应用更新...", "正在重启程序..."]
 
@@ -242,7 +246,11 @@ def test_binary_update_rejects_invalid_filename(binary_update, monkeypatch, name
 
 
 def test_binary_update_rejects_bad_download_without_exiting(binary_update, monkeypatch):
-    monkeypatch.setattr(auto_updater, "download_url", lambda url, path: Path(path).write_bytes(b"bad-data"))
+    monkeypatch.setattr(
+        auto_updater,
+        "download_url",
+        lambda url, path, timeout=120: Path(path).write_bytes(b"bad-data"),
+    )
     success, message = auto_updater.perform_binary_update()
     assert success is False
     assert "大小校验失败" in message
