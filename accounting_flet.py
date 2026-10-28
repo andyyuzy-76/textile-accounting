@@ -20,7 +20,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from app_core.paths import get_data_dir, get_records_file
-from app_core.services.cloud_backup import CloudBackupError, CloudBackupService, WebDAVClient
+from app_core.services.cloud_backup import CloudBackupError
+from app_core.services.local_backup import (
+    MAX_KEEP,
+    MIN_KEEP,
+    LocalBackupService,
+)
 from app_core.services.importers import import_csv_records
 from app_core.services.printer_settings import PrinterSettingsStore
 from app_core.services.records import RecordService
@@ -59,7 +64,7 @@ class AppleColors:
     HOVER_BG = "#f1f5f9"
 
 
-VERSION = "1.15.15"
+VERSION = "1.15.16"
 
 
 class AccountingApp:
@@ -115,16 +120,16 @@ class AccountingApp:
         self.data_dir = str(get_data_dir())
         self.data_file = str(get_records_file())
         os.makedirs(self.data_dir, exist_ok=True)
-        self.cloud_backup = CloudBackupService(Path(self.data_dir))
+        self.backup_service = LocalBackupService(Path(self.data_dir))
         self._backup_generation = 0
-        self.cloud_backup_button = ft.IconButton(
-            icon=cast(ft.IconData, ft.Icons.CLOUD_UPLOAD_OUTLINED),
+        self.backup_button = ft.IconButton(
+            icon=cast(ft.IconData, ft.Icons.SAVE_OUTLINED),
             icon_color=AppleColors.TEXT_SECONDARY,
-            tooltip="云端备份",
-            on_click=lambda _: self.show_cloud_backup(),
+            tooltip="本地备份",
+            on_click=lambda _: self.show_backup(),
         )
         self.record_service = RecordService(
-            JsonStore(Path(self.data_file), on_save=self.schedule_cloud_backup)
+            JsonStore(Path(self.data_file), on_save=self.schedule_backup)
         )
         self.printer_settings_store = PrinterSettingsStore(
             Path(self.data_dir) / "printer_settings.json"
@@ -172,7 +177,7 @@ class AccountingApp:
         except Exception:
             pass
 
-        self.schedule_cloud_backup()
+        self.schedule_backup()
 
     def load_records(self) -> list[dict[str, Any]]:
         """加载历史记录"""
@@ -202,85 +207,91 @@ class AccountingApp:
                 self.receipt_printer, self.printer_settings
             )
         self.refresh_customer_dropdown()
-        self.schedule_cloud_backup()
+        self.schedule_backup()
 
-    def schedule_cloud_backup(self):
-        """合并短时间内的保存，网络操作在后台执行。"""
-        settings = self.cloud_backup.settings.load()
+    def schedule_backup(self):
+        """合并短时间内的保存，磁盘写入在后台执行。"""
+        settings = self.backup_service.settings.load()
         if settings.get("error"):
-            self.set_cloud_backup_status(settings["error"], error=True)
+            self.set_backup_status(settings["error"], error=True)
             return
         if not settings.get("auto_backup"):
             return
         self._backup_generation += 1
         try:
-            self.page.run_task(self.auto_cloud_backup, self._backup_generation)
+            self.page.run_task(self.auto_backup_task, self._backup_generation)
         except Exception:
-            self.set_cloud_backup_status("自动备份未启动，请打开云端备份后重试。", error=True)
+            self.set_backup_status("自动备份未启动，请打开本地备份后重试。", error=True)
 
-    async def auto_cloud_backup(self, generation: int):
+    async def auto_backup_task(self, generation: int):
         await asyncio.sleep(5)
-        if generation != self._backup_generation or not self.cloud_backup.settings.load().get("auto_backup"):
+        if generation != self._backup_generation or not self.backup_service.settings.load().get("auto_backup"):
             return
         if not Path(self.data_file).exists():
             return
         try:
-            name = await asyncio.to_thread(self.cloud_backup.backup, force=False)
+            name = await asyncio.to_thread(self.backup_service.backup, force=False)
             if name:
-                self.set_cloud_backup_status("自动备份成功")
+                self.set_backup_status("自动备份成功")
         except Exception as ex:
-            message = str(ex) if isinstance(ex, CloudBackupError) else "请检查网络和本地文件权限。"
-            self.set_cloud_backup_status(f"自动备份失败：{message}", error=True)
+            message = str(ex) if isinstance(ex, CloudBackupError) else "请检查磁盘空间和本地文件权限。"
+            self.set_backup_status(f"自动备份失败：{message}", error=True)
         self.page.update()
 
-    def set_cloud_backup_status(self, message: str, *, error: bool = False):
-        self.cloud_backup_button.tooltip = f"云端备份：{message}"
-        self.cloud_backup_button.icon_color = AppleColors.WARNING if error else AppleColors.SUCCESS
+    def set_backup_status(self, message: str, *, error: bool = False):
+        self.backup_button.tooltip = f"本地备份：{message}"
+        self.backup_button.icon_color = AppleColors.WARNING if error else AppleColors.SUCCESS
 
-    def show_cloud_backup(self):
-        settings = self.cloud_backup.settings.load()
+    def show_backup(self):
+        settings = self.backup_service.settings.load()
         try:
-            identity = self.cloud_backup.identity()
+            identity = self.backup_service.identity()
         except CloudBackupError as ex:
             self.show_error(str(ex))
             return
-        url_field = ft.TextField(label="WebDAV 地址", value=settings["url"],
-                                 hint_text="https://你的网盘地址/dav/", border_radius=10)
-        username_field = ft.TextField(label="NAS / WebDAV 账号", value=settings["username"], border_radius=10)
-        password_field = ft.TextField(label="WebDAV 应用密码", value=settings["password"],
-                                     password=True, can_reveal_password=True, border_radius=10)
+        directory_field = ft.TextField(label="备份目录", value=settings["directory"], expand=True,
+                                       hint_text="例如 D:\\家纺记账备份", border_radius=10)
         ledger_field = ft.TextField(label="账本名称", value=identity["ledger_name"], max_length=80, border_radius=10)
         device_field = ft.TextField(label="本机名称", value=identity["device_name"], max_length=80, border_radius=10)
         ledger_number = ft.Text(f"账本编号：{identity['ledger_id']}", size=12, selectable=True,
                                 color=AppleColors.TEXT_SECONDARY)
         auto_switch = ft.Switch(label="保存账目或设置后自动备份", value=settings["auto_backup"])
-        status = ft.Text(settings.get("error") or "填写网盘信息后，可先测试连接。", color=AppleColors.TEXT_SECONDARY)
+        keep_values = sorted({10, 20, 30, 50, 100, settings["keep"]})
+        keep_dropdown = ft.Dropdown(label="最多保留份数", value=str(settings["keep"]), width=160,
+                                    options=[ft.dropdown.Option(str(value)) for value in keep_values
+                                             if MIN_KEEP <= value <= MAX_KEEP])
+        status = ft.Text(settings.get("error") or "建议放在另一个磁盘、移动硬盘或网盘同步目录，避免与数据同盘丢失。",
+                         color=AppleColors.TEXT_SECONDARY)
         last_backup = ft.Text("", size=12, color=AppleColors.TEXT_SECONDARY)
-        backup_list = ft.Dropdown(label="云端历史备份", options=[], expand=True)
+        backup_list = ft.Dropdown(label="历史备份", options=[], expand=True)
         backup_details = ft.Text("选择备份后显示账本和来源信息。", size=12, selectable=True,
                                  color=AppleColors.TEXT_SECONDARY)
         history = {}
         progress = ft.ProgressBar(visible=False)
         close_button = ft.TextButton("关闭", on_click=lambda _: self.page.pop_dialog())
         save_button = ft.FilledButton("保存设置")
-        test_button = ft.TextButton("测试连接")
+        pick_button = ft.TextButton("选择目录")
         upload_button = ft.FilledButton("立即备份")
         list_button = ft.TextButton("刷新历史")
         restore_button = ft.TextButton("恢复所选备份", disabled=True)
-        fields = [url_field, username_field, password_field, ledger_field, device_field, auto_switch]
-        buttons = [close_button, save_button, test_button, upload_button, list_button, restore_button, backup_list]
-        self._cloud_backup_busy = False
+        fields = [directory_field, ledger_field, device_field, auto_switch, keep_dropdown]
+        buttons = [close_button, save_button, pick_button, upload_button, list_button, restore_button, backup_list]
+        self._backup_busy = False
 
         def update_last_backup():
-            saved_time = self.cloud_backup.state().get("last_backup")
+            saved_time = self.backup_service.state().get("last_backup")
             last_backup.value = f"上次备份成功：{saved_time}" if saved_time else "尚无成功备份记录"
 
         def current_settings():
-            return {"url": str(url_field.value or ""), "username": str(username_field.value or ""),
-                    "password": str(password_field.value or ""), "auto_backup": bool(auto_switch.value)}
+            try:
+                keep = int(str(keep_dropdown.value or settings["keep"]))
+            except ValueError:
+                keep = settings["keep"]
+            return {"directory": str(directory_field.value or ""), "auto_backup": bool(auto_switch.value),
+                    "keep": keep}
 
         def update_identity():
-            current = self.cloud_backup.identity()
+            current = self.backup_service.identity()
             ledger_field.value = current["ledger_name"]
             device_field.value = current["device_name"]
             ledger_number.value = f"账本编号：{current['ledger_id']}"
@@ -300,15 +311,14 @@ class AccountingApp:
             label = f"{saved_time}｜{source['ledger_name']}｜{source['device_name']}｜{count} 条"
             details = (f"账本：{source['ledger_name']}\n账本编号：{source['ledger_id']}\n"
                        f"来源电脑：{source['device_name']}\n电脑编号：{source['device_id']}\n"
-                       f"备份使用的 NAS 账号：{source.get('webdav_account') or '未记录'}\n"
                        f"备份时间：{saved_time}\n记录数量：{count} 条")
             return label, details
 
         def save_configuration():
-            self.cloud_backup.save_identity(str(ledger_field.value or ""), str(device_field.value or ""))
-            value = self.cloud_backup.settings.save(current_settings())
-            url_field.value = value["url"]
-            username_field.value = value["username"]
+            self.backup_service.save_identity(str(ledger_field.value or ""), str(device_field.value or ""))
+            value = self.backup_service.settings.save(current_settings())
+            directory_field.value = value["directory"]
+            keep_dropdown.value = str(value["keep"])
             self._backup_generation += 1
             update_identity()
             history.clear()
@@ -319,7 +329,7 @@ class AccountingApp:
             return value
 
         def set_busy(busy: bool):
-            self._cloud_backup_busy = busy
+            self._backup_busy = busy
             for control in fields + buttons:
                 control.disabled = busy
             restore_button.disabled = busy or not backup_list.value
@@ -327,84 +337,102 @@ class AccountingApp:
             self.page.update()
 
         def show_failure(ex):
-            status.value = str(ex) if isinstance(ex, CloudBackupError) else "操作失败，请检查网络和本地文件权限。"
+            status.value = str(ex) if isinstance(ex, CloudBackupError) else "操作失败，请检查磁盘空间和文件夹权限。"
             status.color = AppleColors.DANGER
-            self.set_cloud_backup_status(str(status.value), error=True)
+            self.set_backup_status(str(status.value), error=True)
 
         def save_settings(_):
             try:
                 save_configuration()
-                status.value = "云端备份设置已保存。"
+                status.value = "本地备份设置已保存。"
                 status.color = AppleColors.SUCCESS
                 restore_button.disabled = True
-                self.schedule_cloud_backup()
+                self.schedule_backup()
             except Exception as ex:
                 show_failure(ex)
             self.page.update()
 
+        async def pick_directory(_=None):
+            if self._backup_busy:
+                return
+            picker = ft.FilePicker()
+            self.page.overlay.append(picker)
+            self.page.update()
+            path = None
+            try:
+                path = await picker.get_directory_path(dialog_title="选择备份目录")
+            except Exception:
+                path = None
+            finally:
+                try:
+                    self.page.overlay.remove(picker)
+                except ValueError:
+                    pass
+            if path:
+                directory_field.value = path
+                status.value = "已选择目录，点击「保存设置」后生效。"
+                status.color = AppleColors.TEXT_SECONDARY
+            self.page.update()
+
         async def run_operation(operation: str):
-            if self._cloud_backup_busy:
+            if self._backup_busy:
                 return
             try:
-                value = save_configuration()
-                client = WebDAVClient(value)
+                save_configuration()
             except Exception as ex:
                 show_failure(ex)
                 self.page.update()
                 return
             set_busy(True)
             status.color = AppleColors.TEXT_SECONDARY
-            status.value = {"test": "正在测试连接…", "upload": "正在上传并校验备份…", "list": "正在读取历史备份…"}[operation]
+            status.value = {"upload": "正在写入并校验备份…", "list": "正在读取历史备份…"}[operation]
             self.page.update()
             try:
-                if operation == "test":
-                    await asyncio.to_thread(client.ensure_directory)
-                    status.value = "连接成功，云端备份目录可读取；立即备份将验证上传。"
-                elif operation == "upload":
-                    await asyncio.to_thread(self.cloud_backup.backup)
-                    status.value = "备份成功，已从云端下载并核对内容。"
+                if operation == "upload":
+                    await asyncio.to_thread(self.backup_service.backup)
+                    status.value = "备份成功，已重新读取并核对文件内容。"
                     update_last_backup()
                 else:
-                    backups = await asyncio.to_thread(self.cloud_backup.list_backups)
+                    backups = await asyncio.to_thread(self.backup_service.list_backups)
                     history.update({info["name"]: info for info in backups})
                     backup_list.options = [ft.dropdown.Option(info["name"], describe_backup(info)[0]) for info in backups]
                     backup_list.value = backups[0]["name"] if backups else None
-                    backup_details.value = describe_backup(backups[0])[1] if backups else "云端还没有备份。"
-                    status.value = f"找到 {len(backups)} 份云端备份。" if backups else "云端还没有备份，请先点击立即备份。"
+                    backup_details.value = describe_backup(backups[0])[1] if backups else "备份目录里还没有备份。"
+                    status.value = f"找到 {len(backups)} 份本地备份。" if backups else "备份目录里还没有备份，请先点击立即备份。"
                 status.color = AppleColors.SUCCESS
-                self.set_cloud_backup_status(str(status.value))
+                self.set_backup_status(str(status.value))
             except Exception as ex:
                 show_failure(ex)
             finally:
                 set_busy(False)
-                self.schedule_cloud_backup()
+                self.schedule_backup()
 
         async def prepare_restore():
             name = backup_list.value
-            if not name or self._cloud_backup_busy:
+            if not name or self._backup_busy:
                 return
             try:
-                current = self.cloud_backup.identity()
-                saved_settings = self.cloud_backup.settings.load()
+                current = self.backup_service.identity()
+                saved_settings = self.backup_service.settings.load()
             except Exception as ex:
                 show_failure(ex)
                 self.page.update()
                 return
             if (current_settings() != saved_settings or
                     ledger_field.value != current["ledger_name"] or device_field.value != current["device_name"]):
-                status.value = "网盘或账本信息已改变，请先刷新历史备份。"
+                status.value = "备份目录或账本信息已改变，请先刷新历史备份。"
                 self.page.update()
                 return
             self._backup_generation += 1
             set_busy(True)
-            status.value = "正在下载并校验所选备份…"
+            status.value = "正在读取并校验所选备份…"
             self.page.update()
             try:
-                data = await asyncio.to_thread(self.cloud_backup.download, name)
+                data = await asyncio.to_thread(self.backup_service.download, name)
             except Exception as ex:
                 show_failure(ex)
                 set_busy(False)
-                self.schedule_cloud_backup()
+                self.schedule_backup()
                 return
 
             async def confirm_restore(_):
@@ -412,7 +440,7 @@ class AccountingApp:
                 cancel_button.disabled = True
                 self.page.update()
                 try:
-                    safety_dir = await asyncio.to_thread(self.cloud_backup.restore, data)
+                    safety_dir = await asyncio.to_thread(self.backup_service.restore, data)
                     update_identity()
                     self.load_records()
                     self.load_printer_settings()
@@ -425,21 +453,21 @@ class AccountingApp:
                 finally:
                     self.page.pop_dialog()
                     set_busy(False)
-                    self.schedule_cloud_backup()
+                    self.schedule_backup()
 
             def cancel_restore(_=None):
                 self.page.pop_dialog()
                 set_busy(False)
-                self.schedule_cloud_backup()
+                self.schedule_backup()
 
             confirm_button = ft.FilledButton("确认恢复", on_click=confirm_restore)
             cancel_button = ft.TextButton("取消", on_click=cancel_restore)
             source_details = describe_backup({"name": name, "backup_identity": data.get("backup_identity"),
                                                "record_count": len(data["records"])})[1]
-            adoption = ("恢复后沿用备份中的账本编号，本机名称和 NAS 登录配置保留。" if data.get("backup_identity") else
+            adoption = ("恢复后沿用备份中的账本编号，本机名称和备份目录配置保留。" if data.get("backup_identity") else
                         "此备份未记录账本归属；恢复后使用当前账本名称和编号。")
             self.page.show_dialog(ft.AlertDialog(
-                modal=True, scrollable=True, title=ft.Text("确认恢复云端备份"),
+                modal=True, scrollable=True, title=ft.Text("确认恢复本地备份"),
                 content=ft.Text(f"当前账本：{current['ledger_name']}（{current['ledger_id']}）\n\n{source_details}\n\n"
                                 f"将用所选备份的 {len(data['records'])} 条账目、客户列表和打印设置替换当前数据。\n"
                                 f"{adoption}\n恢复前会保留本地原始文件副本。", selectable=True),
@@ -447,10 +475,11 @@ class AccountingApp:
             ))
 
         save_button.on_click = save_settings
-        test_button.on_click = lambda _: self.page.run_task(run_operation, "test")
+        pick_button.on_click = lambda _: self.page.run_task(pick_directory)
         upload_button.on_click = lambda _: self.page.run_task(run_operation, "upload")
         list_button.on_click = lambda _: self.page.run_task(run_operation, "list")
         restore_button.on_click = lambda _: self.page.run_task(prepare_restore)
+
         def select_backup(_):
             restore_button.disabled = not backup_list.value
             if backup_list.value in history:
@@ -460,19 +489,21 @@ class AccountingApp:
         backup_list.on_select = select_backup
         update_last_backup()
         self.page.show_dialog(ft.AlertDialog(
-            modal=True, title=ft.Text("☁ 云端备份", weight=ft.FontWeight.BOLD),
-            content=ft.Container(width=540, content=ft.Column(
-                controls=[ft.Text("NAS 账号管理访问权限；账本编号识别同一套账目，本机名称标明备份来源。", size=13),
-                          *fields, ledger_number, ft.Row([test_button, upload_button]), progress, status, last_backup,
-                          ft.Divider(), ft.Row([backup_list, list_button]), backup_details, restore_button,
-                          ft.Text("开启自动备份后，每次保存约 5 秒后备份，连续保存会合并；断网后在下次保存或启动时重试。\n备份为 JSON 文件，请使用私有网盘；历史版本可在网盘中清理。", size=12, color=AppleColors.TEXT_SECONDARY)],
+            modal=True, title=ft.Text("💾 本地备份", weight=ft.FontWeight.BOLD),
+            content=ft.Container(width=560, content=ft.Column(
+                controls=[ft.Text("备份文件保存在本机文件夹，不经过网络，也不依赖 NAS。建议放在另一个磁盘、移动硬盘或网盘同步目录。", size=13),
+                          ft.Row([directory_field, pick_button], spacing=8),
+                          ledger_field, device_field, ledger_number, auto_switch, keep_dropdown,
+                          ft.Row([upload_button, list_button]), progress, status, last_backup,
+                          ft.Divider(), backup_list, backup_details, restore_button,
+                          ft.Text("开启自动备份后，每次保存约 5 秒后备份，连续保存会合并；内容没有变化时自动跳过。\n备份为 JSON 文件，超过保留份数的最旧备份会被自动清理，请勿把其他文件放进该目录。", size=12, color=AppleColors.TEXT_SECONDARY)],
                 tight=True, spacing=12, scroll=ft.ScrollMode.AUTO, height=560,
             )), actions=[close_button, save_button],
         ))
 
     def handle_main_form_keyboard(self, e):
         """处理主界面的全局键盘事件"""
-        if getattr(self, "_cloud_backup_busy", False):
+        if getattr(self, "_backup_busy", False):
             return
         if e.key == "Enter" and e.ctrl:
             self._ctrl_enter_submit_pending = True
@@ -1132,7 +1163,7 @@ class AccountingApp:
                         tooltip="检查更新",
                         on_click=lambda _: self.check_for_updates(),
                     ),
-                    self.cloud_backup_button,
+                    self.backup_button,
                     ft.IconButton(
                         icon=cast(ft.IconData, ft.Icons.BAR_CHART),
                         icon_color=AppleColors.TEXT_SECONDARY,
@@ -2724,7 +2755,7 @@ class AccountingApp:
             info_text,
             customers_field,
             ft.FilledButton("📁 打开数据目录", on_click=open_data_dir),
-            ft.FilledButton("☁ 云端备份", on_click=lambda _: self.show_cloud_backup()),
+            ft.FilledButton("💾 本地备份", on_click=lambda _: self.show_backup()),
         ]
         settings_actions: list[ft.Control] = [
             ft.TextButton("关闭", on_click=lambda e: self.page.pop_dialog()),
