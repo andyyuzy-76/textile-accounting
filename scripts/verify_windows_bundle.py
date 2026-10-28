@@ -52,7 +52,9 @@ def verify_bundle(executable: Path, manifest_path: Path) -> None:
 
 
 def smoke_launch(executable: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="textile-release-smoke-") as folder:
+    # 客户端退出后仍可能短暂占用 profile 目录，清理失败不应影响校验结论。
+    with tempfile.TemporaryDirectory(prefix="textile-release-smoke-",
+                                      ignore_cleanup_errors=True) as folder:
         profile = Path(folder)
         env = os.environ.copy()
         env.update({"USERPROFILE": folder, "HOME": folder})
