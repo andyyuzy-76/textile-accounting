@@ -18,6 +18,7 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       asset_name: ${{ steps.release.outputs.asset_name }}
+      message: ${{ steps.release.outputs.message }}
     env:
       PYTHONUTF8: '1'
 
@@ -58,7 +59,7 @@ jobs:
           assert manifest['exe_asset_name'] == asset_name
           assert manifest['changes']
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-              output.write(f'version={version}\ntag=v{version}\nasset_name={asset_name}\n')
+              output.write(f'version={version}\ntag=v{version}\nasset_name={asset_name}\nmessage={manifest["message"]}\n')
 
       - name: Syntax and complete regression tests
         run: |
@@ -144,11 +145,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           ASSET_NAME: ${{ needs.build.outputs.asset_name }}
+          RELEASE_MESSAGE: ${{ needs.build.outputs.message }}
         run: |
           gh release create "$RELEASE_TAG" \
             "release-artifact/dist/$ASSET_NAME" \
             release-artifact/dist/version.json \
             release-artifact/dist/SHA256SUMS.txt \
             --draft --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG - 修复月度统计与版本信息" \
+            --title "$RELEASE_TAG - $RELEASE_MESSAGE" \
             --notes-file release-artifact/release-notes.md
